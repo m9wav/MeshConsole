@@ -1,0 +1,15 @@
+# Core Meshtastic library
+meshtastic>=2.0.0
+
+# Web framework and CORS support
+Flask>=2.0.0
+Flask-CORS>=4.0.0
+
+# Protocol buffer support (usually included with meshtastic)
+protobuf>=3.20.0
+
+# PubSub messaging (usually included with meshtastic)
+pypubsub>=4.0.0
+
+# Additional dependencies for robust operation
+requests>=2.25.0
