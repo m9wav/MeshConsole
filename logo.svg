@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 120">
+  <defs>
+    <linearGradient id="meshGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#667eea"/>
+      <stop offset="100%" style="stop-color:#764ba2"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Mesh network nodes and connections -->
+  <g fill="none" stroke="url(#meshGrad)" stroke-width="2" opacity="0.6">
+    <!-- Connection lines -->
+    <line x1="30" y1="60" x2="55" y2="35"/>
+    <line x1="30" y1="60" x2="55" y2="85"/>
+    <line x1="55" y1="35" x2="80" y2="60"/>
+    <line x1="55" y1="85" x2="80" y2="60"/>
+    <line x1="55" y1="35" x2="55" y2="85"/>
+    <line x1="30" y1="60" x2="80" y2="60"/>
+  </g>
+
+  <!-- Mesh nodes -->
+  <g fill="url(#meshGrad)">
+    <circle cx="30" cy="60" r="8"/>
+    <circle cx="55" cy="35" r="6"/>
+    <circle cx="55" cy="85" r="6"/>
+    <circle cx="80" cy="60" r="8"/>
+  </g>
+
+  <!-- Broadcast waves from right node -->
+  <g fill="none" stroke="url(#meshGrad)" stroke-width="2">
+    <path d="M88 50 Q95 60 88 70" opacity="0.4"/>
+    <path d="M94 42 Q105 60 94 78" opacity="0.3"/>
+    <path d="M100 34 Q115 60 100 86" opacity="0.2"/>
+  </g>
+
+  <!-- Text -->
+  <text x="125" y="70" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="36" font-weight="700" fill="#1e293b">
+    Mesh<tspan fill="url(#meshGrad)">Console</tspan>
+  </text>
+
+  <!-- Byline -->
+  <text x="127" y="95" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="14" fill="#64748b">
+    by M9WAV
+  </text>
+</svg>
