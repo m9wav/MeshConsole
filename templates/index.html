@@ -1157,19 +1157,24 @@
                     const data = response.packets || response;
                     const nodes = {};
                     data.forEach(packet => {
+                        // Only update if node doesn't exist or this timestamp is more recent
                         if (packet.from_id && packet.from_name) {
-                            nodes[packet.from_id] = {
-                                id: packet.from_id,
-                                name: packet.from_name,
-                                lastSeen: packet.timestamp
-                            };
+                            if (!nodes[packet.from_id] || new Date(packet.timestamp) > new Date(nodes[packet.from_id].lastSeen)) {
+                                nodes[packet.from_id] = {
+                                    id: packet.from_id,
+                                    name: packet.from_name,
+                                    lastSeen: packet.timestamp
+                                };
+                            }
                         }
                         if (packet.to_id && packet.to_name && packet.to_id !== '^all') {
-                            nodes[packet.to_id] = {
-                                id: packet.to_id,
-                                name: packet.to_name,
-                                lastSeen: packet.timestamp
-                            };
+                            if (!nodes[packet.to_id] || new Date(packet.timestamp) > new Date(nodes[packet.to_id].lastSeen)) {
+                                nodes[packet.to_id] = {
+                                    id: packet.to_id,
+                                    name: packet.to_name,
+                                    lastSeen: packet.timestamp
+                                };
+                            }
                         }
                     });
                     
