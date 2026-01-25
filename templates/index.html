@@ -757,7 +757,6 @@
                                 <div class="card-body">
                                     <small class="text-muted">
                                         <div>Version: 2.1.0</div>
-                                        <div>Connected: <span id="device-ip">Loading...</span></div>
                                         <div>Local Node: <span id="local-node">Detecting...</span></div>
                                         <div>Session: <span id="session-start">Just started</span></div>
                                     </small>
@@ -1776,9 +1775,6 @@
         }
 
         function updateSystemInfo() {
-            // Update device IP from config
-            document.getElementById('device-ip').textContent = '192.168.50.91'; // This could be dynamic
-
             // Update local node info when available
             fetch('/packets?limit=1&offset=0')
                 .then(response => response.json())
