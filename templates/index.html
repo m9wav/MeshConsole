@@ -1153,7 +1153,8 @@
             // Since we don't have a dedicated nodes endpoint, we'll extract from packets
             fetch('/packets?limit=1000&offset=0')
                 .then(response => response.json())
-                .then(data => {
+                .then(response => {
+                    const data = response.packets || response;
                     const nodes = {};
                     data.forEach(packet => {
                         if (packet.from_id && packet.from_name) {
