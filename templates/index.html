@@ -1778,12 +1778,13 @@
         function updateSystemInfo() {
             // Update device IP from config
             document.getElementById('device-ip').textContent = '192.168.50.91'; // This could be dynamic
-            
+
             // Update local node info when available
             fetch('/packets?limit=1&offset=0')
                 .then(response => response.json())
-                .then(data => {
-                    if (data.length > 0) {
+                .then(response => {
+                    const packets = response.packets || response;
+                    if (packets.length > 0) {
                         // Try to get local node info from the first packet or system
                         document.getElementById('local-node').textContent = 'Auto-detected';
                     }
@@ -1919,7 +1920,7 @@
                 root.style.setProperty('--border-color', '#e2e8f0');
                 
                 // Reset body background
-                body.style.background = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
+                body.style.background = 'linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%)';
                 
                 // Reset main container
                 const mainContainer = document.querySelector('.main-container');
