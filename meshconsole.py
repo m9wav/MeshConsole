@@ -470,6 +470,16 @@ class MeshtasticTool:
             if message:
                 self.db_handler.log_message(timestamp, from_id, to_id, port_name, message)
 
+            # Resolve node names, with fallback to packet data for NODEINFO
+            from_name = self._resolve_node_name(from_id)
+            to_name = self._resolve_node_name(to_id)
+
+            # For NODEINFO packets, extract name from packet if not resolved
+            if (port_name == 'NODEINFO_APP' or portnum == 4) and from_name == from_id:
+                user_data = decoded.get('user', {})
+                if user_data.get('longName'):
+                    from_name = user_data['longName']
+
             # Log packet
             raw_packet_serialized = json.loads(json.dumps(packet, default=self._json_serializer))
 
@@ -477,8 +487,8 @@ class MeshtasticTool:
                 timestamp=timestamp,
                 from_id=from_id,
                 to_id=to_id,
-                from_name=self._resolve_node_name(from_id),
-                to_name=self._resolve_node_name(to_id),
+                from_name=from_name,
+                to_name=to_name,
                 port_name=port_name,
                 payload=payload,
                 message=message,
