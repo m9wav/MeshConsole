@@ -118,6 +118,29 @@
             box-shadow: 0 4px 15px rgba(37, 99, 235, 0.3);
         }
 
+        .btn-outline-refresh {
+            background: transparent;
+            color: var(--text-color);
+            border: none;
+        }
+
+        .btn-outline-refresh:hover,
+        .btn-outline-refresh.refreshing {
+            background: linear-gradient(135deg, var(--primary-color), #3b82f6);
+            color: white;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 15px rgba(37, 99, 235, 0.3);
+        }
+
+        .btn-outline-refresh.refreshing i {
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+
         .btn-success-modern {
             background: linear-gradient(135deg, var(--success-color), #10b981);
             color: white;
@@ -514,7 +537,7 @@
                             <button class="btn btn-outline-primary btn-modern" id="unique-locations-toggle" title="Show only unique locations (latest position per node)">
                                 <i class="bi bi-geo-alt"></i> Unique Locations
                             </button>
-                            <button class="btn btn-primary-modern btn-modern" id="refresh-packets">
+                            <button class="btn btn-outline-refresh btn-modern" id="refresh-packets">
                                 <i class="bi bi-arrow-clockwise"></i> Refresh
                             </button>
                             <button class="btn btn-success-modern btn-modern" id="auto-refresh-toggle">
@@ -532,7 +555,15 @@
                         <button id="prev-button" class="btn btn-primary-modern btn-modern" disabled>
                             <i class="bi bi-chevron-left"></i> Previous
                         </button>
-                        <span class="text-muted" id="packet-count">Loading packets...</span>
+                        <div class="d-flex align-items-center gap-2">
+                            <span class="text-muted" id="packet-count">Loading packets...</span>
+                            <select id="limit-select" class="form-select form-select-sm" style="width: auto;">
+                                <option value="10" selected>10 per page</option>
+                                <option value="25">25 per page</option>
+                                <option value="50">50 per page</option>
+                                <option value="100">100 per page</option>
+                            </select>
+                        </div>
                         <button id="next-button" class="btn btn-primary-modern btn-modern">
                             Next <i class="bi bi-chevron-right"></i>
                         </button>
@@ -869,7 +900,7 @@
         // Application state
         let appState = {
             offset: 0,
-            limit: 100,
+            limit: 10,
             autoRefresh: true,
             refreshInterval: 5000,
             initializedMaps: {},
@@ -903,8 +934,9 @@
             // Initialize charts
             initializeCharts();
             
-            // Start auto-refresh
+            // Start auto-refresh (hide manual refresh button since auto is ON by default)
             startAutoRefresh();
+            document.getElementById('refresh-packets').style.display = 'none';
             
             // Setup character counter
             const messageText = document.getElementById('message-text');
@@ -931,6 +963,13 @@
             // Refresh buttons
             document.getElementById('refresh-packets').addEventListener('click', fetchPackets);
             document.getElementById('refresh-nodes').addEventListener('click', fetchNodes);
+
+            // Limit selector
+            document.getElementById('limit-select').addEventListener('change', function() {
+                appState.limit = parseInt(this.value);
+                appState.offset = 0;
+                fetchPackets();
+            });
 
             // Port filter
             document.getElementById('port-filter').addEventListener('change', function() {
@@ -1023,14 +1062,17 @@
         function toggleAutoRefresh() {
             appState.autoRefresh = !appState.autoRefresh;
             const button = document.getElementById('auto-refresh-toggle');
-            
+            const refreshBtn = document.getElementById('refresh-packets');
+
             if (appState.autoRefresh) {
                 button.innerHTML = '<i class="bi bi-pause-circle"></i> Auto-refresh: ON';
                 button.className = 'btn btn-success-modern btn-modern ms-2';
+                refreshBtn.style.display = 'none';
                 startAutoRefresh();
             } else {
                 button.innerHTML = '<i class="bi bi-play-circle"></i> Auto-refresh: OFF';
                 button.className = 'btn btn-warning-modern btn-modern ms-2';
+                refreshBtn.style.display = '';
                 if (appState.autoRefreshTimer) {
                     clearInterval(appState.autoRefreshTimer);
                     appState.autoRefreshTimer = null;

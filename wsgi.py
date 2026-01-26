@@ -191,12 +191,14 @@ def get_packets():
 
     # If filtering by node or port, query database for more complete results
     if node_filter or port_filter or unique_locations:
-        # For unique locations, force POSITION_APP filter
+        # For unique locations, force POSITION_APP filter and fetch more for deduplication
         effective_port_filter = 'POSITION_APP' if unique_locations else (port_filter or None)
+        # For unique locations, fetch more to find unique positions; otherwise just fetch what we need
+        db_limit = max_packets if unique_locations else (offset + limit)
         packets = tool.db_handler.fetch_packets_filtered(
             node_filter=node_filter or None,
             port_filter=effective_port_filter,
-            limit=max_packets
+            limit=db_limit
         )
         # Resolve node names using current node database
         for packet in packets:

@@ -152,6 +152,12 @@ class DatabaseHandler:
                 )
             ''')
 
+            # Create indexes for faster filtering
+            self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_packets_from_id ON packets(from_id)')
+            self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_packets_to_id ON packets(to_id)')
+            self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_packets_port_name ON packets(port_name)')
+            self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_packets_timestamp ON packets(timestamp DESC)')
+
             self.conn.commit()
             logger.info("Database initialized.")
         except sqlite3.Error as e:
@@ -1278,12 +1284,14 @@ class MeshtasticTool:
 
             # If filtering by node or port or unique locations, query database for more complete results
             if node_filter or port_filter or unique_locations:
-                # For unique locations, force POSITION_APP filter
+                # For unique locations, force POSITION_APP filter and fetch more for deduplication
                 effective_port_filter = 'POSITION_APP' if unique_locations else (port_filter or None)
+                # For unique locations, fetch more to find unique positions; otherwise just fetch what we need
+                db_limit = self.max_packets_memory if unique_locations else (offset + limit)
                 packets = self.db_handler.fetch_packets_filtered(
                     node_filter=node_filter or None,
                     port_filter=effective_port_filter,
-                    limit=self.max_packets_memory
+                    limit=db_limit
                 )
                 # Resolve node names using current node database
                 for packet in packets:
