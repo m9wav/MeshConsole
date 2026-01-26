@@ -1343,12 +1343,18 @@ class MeshtasticTool:
             try:
                 # Query all NODEINFO packets, get latest per node
                 with self.db_handler.lock:
+                    # Use subquery to ensure we get raw_packet from the actual latest row
                     self.db_handler.cursor.execute('''
-                        SELECT from_id, raw_packet, MAX(timestamp) as latest
-                        FROM packets
-                        WHERE port_name = 'NODEINFO_APP'
-                        GROUP BY from_id
-                        ORDER BY latest DESC
+                        SELECT p.from_id, p.raw_packet, p.timestamp
+                        FROM packets p
+                        INNER JOIN (
+                            SELECT from_id, MAX(timestamp) as max_ts
+                            FROM packets
+                            WHERE port_name = 'NODEINFO_APP'
+                            GROUP BY from_id
+                        ) latest ON p.from_id = latest.from_id AND p.timestamp = latest.max_ts
+                        WHERE p.port_name = 'NODEINFO_APP'
+                        ORDER BY p.timestamp DESC
                     ''')
                     rows = self.db_handler.cursor.fetchall()
 
