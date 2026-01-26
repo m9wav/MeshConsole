@@ -304,6 +304,8 @@ class MeshtasticTool:
         self.local_node_id = None  # Store the local node ID for filtering
         self.traceroute_results = {}  # Store traceroute results for web interface
         self.traceroute_results_lock = threading.Lock()
+        self.server_start_time = datetime.now()  # Track when the tool was started
+        self.connection_start_time = None  # Track when connection was established
 
         # Subscribe to Meshtastic events
         pub.subscribe(self.on_receive, 'meshtastic.receive')
@@ -324,6 +326,7 @@ class MeshtasticTool:
                 logger.info(f"Connecting via TCP to {self.device_ip}...")
                 self.interface = meshtastic.tcp_interface.TCPInterface(hostname=self.device_ip)
             self._sync_node_db()  # Sync node database upon connection
+            self.connection_start_time = datetime.now()  # Track successful connection time
         except Exception as e:
             conn_target = self.serial_port or "auto-detect" if self.connection_type.lower() == 'usb' else self.device_ip
             logger.error(f"Failed to connect to the Meshtastic device ({self.connection_type}) at {conn_target}: {e}")
@@ -1225,6 +1228,27 @@ class MeshtasticTool:
             except Exception as e:
                 logger.error(f"Error fetching traceroute results: {e}")
                 return jsonify({'success': False, 'error': str(e)}), 500
+
+        @app.route('/status')
+        def get_status():
+            """Return server status including uptime and connection info."""
+            try:
+                now = datetime.now()
+                server_uptime = int((now - self.server_start_time).total_seconds()) if self.server_start_time else 0
+                connection_uptime = int((now - self.connection_start_time).total_seconds()) if self.connection_start_time else 0
+                connected = self.interface is not None
+
+                return jsonify({
+                    'connected': connected,
+                    'server_start': self.server_start_time.isoformat() if self.server_start_time else None,
+                    'connection_start': self.connection_start_time.isoformat() if self.connection_start_time else None,
+                    'server_uptime_seconds': server_uptime,
+                    'connection_uptime_seconds': connection_uptime,
+                    'local_node_id': self.local_node_id
+                })
+            except Exception as e:
+                logger.error(f"Error fetching status: {e}")
+                return jsonify({'error': str(e), 'connected': False}), 500
 
         @app.route('/stats')
         def get_stats():

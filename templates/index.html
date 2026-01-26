@@ -845,15 +845,8 @@
         });
 
         function initializeApp() {
-            // Load or set session start time (persisted in localStorage)
-            const storedSessionStart = localStorage.getItem('meshconsole_session_start');
-            if (storedSessionStart) {
-                appState.sessionStart = new Date(storedSessionStart);
-            } else {
-                appState.sessionStart = new Date();
-                localStorage.setItem('meshconsole_session_start', appState.sessionStart.toISOString());
-            }
-            document.getElementById('session-start').textContent = appState.sessionStart.toLocaleTimeString();
+            // Session time will be fetched from server via updateUptime()
+            document.getElementById('session-start').textContent = 'Loading...';
             
             // Initialize charts
             initializeCharts();
@@ -1704,11 +1697,44 @@
         }
 
         function updateUptime() {
-            const now = new Date();
-            const diff = now - appState.sessionStart;
-            const hours = Math.floor(diff / (1000 * 60 * 60));
-            const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-            document.getElementById('uptime').textContent = `${hours}h ${minutes}m`;
+            // Fetch server-side uptime
+            fetch('/status')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.connection_uptime_seconds !== undefined) {
+                        const seconds = data.connection_uptime_seconds;
+                        const hours = Math.floor(seconds / 3600);
+                        const minutes = Math.floor((seconds % 3600) / 60);
+                        document.getElementById('uptime').textContent = `${hours}h ${minutes}m`;
+
+                        // Update connection start time display
+                        if (data.connection_start) {
+                            const startTime = new Date(data.connection_start);
+                            document.getElementById('session-start').textContent = startTime.toLocaleTimeString();
+                        }
+
+                        // Update connection status indicator
+                        const statusIndicator = document.querySelector('.status-indicator');
+                        const statusText = document.getElementById('connection-status');
+                        if (data.connected) {
+                            statusIndicator.classList.remove('status-offline');
+                            statusIndicator.classList.add('status-online');
+                            statusText.textContent = 'Connected';
+                        } else {
+                            statusIndicator.classList.remove('status-online');
+                            statusIndicator.classList.add('status-offline');
+                            statusText.textContent = 'Disconnected';
+                        }
+
+                        // Update local node ID if available
+                        if (data.local_node_id) {
+                            document.getElementById('local-node').textContent = data.local_node_id;
+                        }
+                    }
+                })
+                .catch(error => {
+                    console.error('Error fetching status:', error);
+                });
         }
 
         function saveSettings() {
@@ -1815,19 +1841,8 @@
         }
 
         function updateSystemInfo() {
-            // Update local node info when available
-            fetch('/packets?limit=1&offset=0')
-                .then(response => response.json())
-                .then(response => {
-                    const packets = response.packets || response;
-                    if (packets.length > 0) {
-                        // Try to get local node info from the first packet or system
-                        document.getElementById('local-node').textContent = 'Auto-detected';
-                    }
-                })
-                .catch(error => {
-                    console.error('Error fetching system info:', error);
-                });
+            // System info is now fetched via /status endpoint in updateUptime()
+            // This function is kept for compatibility but the work is done in updateUptime()
         }
 
         function applyTheme(theme) {
