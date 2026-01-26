@@ -414,6 +414,7 @@ class MeshtasticTool:
 
         self.interface = None
         self.node_name_map = {}
+        self.node_short_name_map = {}
         self.latest_packets = []  # Shared data for web server
         self.latest_packets_lock = threading.Lock()
         self.db_handler = DatabaseHandler()
@@ -466,8 +467,11 @@ class MeshtasticTool:
             for node_id, node_info in nodes.items():
                 user = node_info.get('user', {})
                 long_name = user.get('longName', 'Unknown')
+                short_name = user.get('shortName', '')
                 self.node_name_map[node_id] = long_name
-                logger.debug(f"Node {node_id} is mapped to {long_name}")
+                if short_name:
+                    self.node_short_name_map[node_id] = short_name
+                logger.debug(f"Node {node_id} is mapped to {long_name} ({short_name})")
                 
                 # Alternative method to detect local node if myInfo didn't work
                 if not self.local_node_id and node_info.get('num'):
@@ -1365,12 +1369,14 @@ class MeshtasticTool:
                         raw_packet = json.loads(row[1]) if row[1] else {}
                         user = raw_packet.get('decoded', {}).get('user', {})
                         db_name = user.get('longName', node_id)
-                        # Prefer in-memory name from device (more up-to-date) over DB
+                        db_short = user.get('shortName', '')
+                        # Prefer in-memory names from device (more up-to-date) over DB
                         live_name = self.node_name_map.get(node_id)
+                        live_short = self.node_short_name_map.get(node_id)
                         nodes.append({
                             'id': node_id,
                             'longName': live_name if live_name and live_name != node_id else db_name,
-                            'shortName': user.get('shortName', ''),
+                            'shortName': live_short if live_short else db_short,
                             'hwModel': user.get('hwModel', ''),
                             'lastSeen': row[2]
                         })
