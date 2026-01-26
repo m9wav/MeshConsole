@@ -191,10 +191,20 @@ class DatabaseHandler:
             except sqlite3.Error as e:
                 logger.error(f"Failed to log packet to database: {e}")
 
-    def fetch_packets(self):
-        """Fetch all packets from the database."""
+    def fetch_packets(self, hours=None):
+        """Fetch packets from the database, optionally filtered by time.
+
+        Args:
+            hours: If specified, only return packets from the last N hours.
+        """
         with self.lock:
-            self.cursor.execute('SELECT * FROM packets')
+            if hours:
+                self.cursor.execute(
+                    'SELECT * FROM packets WHERE timestamp >= datetime("now", ? || " hours") ORDER BY timestamp DESC',
+                    (f'-{hours}',)
+                )
+            else:
+                self.cursor.execute('SELECT * FROM packets ORDER BY timestamp DESC')
             return self.cursor.fetchall()
 
     def fetch_packet_stats(self):
@@ -1292,8 +1302,9 @@ class MeshtasticTool:
                 if export_format not in ['json', 'csv']:
                     return jsonify({'error': 'Invalid format. Use json or csv.'}), 400
                 
-                packets = self.db_handler.fetch_packets()
-                
+                # Only export last 48 hours of data
+                packets = self.db_handler.fetch_packets(hours=48)
+
                 if export_format == 'json':
                     data = []
                     for packet in packets:
@@ -1343,9 +1354,10 @@ class MeshtasticTool:
         print()
 
     def export_data(self, export_format='json'):
-        """Export data to a file."""
+        """Export data to a file (last 48 hours)."""
         filename = f"meshtastic_data.{export_format}"
-        packets = self.db_handler.fetch_packets()
+        # Only export last 48 hours of data
+        packets = self.db_handler.fetch_packets(hours=48)
 
         if export_format == 'json':
             data = []
