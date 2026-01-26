@@ -185,13 +185,16 @@ def get_packets():
     limit = int(request.args.get('limit', 1000))
     offset = int(request.args.get('offset', 0))
     port_filter = request.args.get('port_filter', '')
+    node_filter = request.args.get('node_filter', '')
 
     with tool.latest_packets_lock:
         packets = list(tool.latest_packets)
 
-    # Apply server-side filter if specified
+    # Apply server-side filters if specified
     if port_filter:
         packets = [p for p in packets if p.get('port_name') == port_filter]
+    if node_filter:
+        packets = [p for p in packets if p.get('from_id') == node_filter or p.get('to_id') == node_filter]
 
     total_count = len(packets)
     packets = packets[::-1]  # Newest first
@@ -200,7 +203,7 @@ def get_packets():
     return Response(json.dumps({
         'packets': paginated,
         'total': total_count,
-        'filtered': bool(port_filter)
+        'filtered': bool(port_filter or node_filter)
     }, default=tool._json_serializer), mimetype='application/json')
 
 @app.route('/send-message', methods=['POST'])

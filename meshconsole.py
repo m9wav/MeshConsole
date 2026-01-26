@@ -1156,17 +1156,30 @@ class MeshtasticTool:
         def get_packets():
             limit = int(request.args.get('limit', self.max_packets_memory))
             offset = int(request.args.get('offset', 0))
-            
+            port_filter = request.args.get('port_filter', '')
+            node_filter = request.args.get('node_filter', '')
+
             with self.latest_packets_lock:
                 packets = list(self.latest_packets)
-            
+
+            # Apply server-side filters if specified
+            if port_filter:
+                packets = [p for p in packets if p.get('port_name') == port_filter]
+            if node_filter:
+                packets = [p for p in packets if p.get('from_id') == node_filter or p.get('to_id') == node_filter]
+
             # Apply pagination
             total_packets = len(packets)
             packets = packets[::-1]  # Reverse for newest first
             paginated_packets = packets[offset:offset + limit]
-            
+
             try:
-                packets_json = json.dumps(paginated_packets, default=self._json_serializer)
+                response_data = {
+                    'packets': paginated_packets,
+                    'total': total_packets,
+                    'filtered': bool(port_filter or node_filter)
+                }
+                packets_json = json.dumps(response_data, default=self._json_serializer)
             except TypeError as e:
                 logger.error(f"Failed to serialize packets: {e}")
                 return jsonify({'error': 'Failed to serialize packets'}), 500
