@@ -7,7 +7,7 @@ A tool for interacting with Meshtastic devices over TCP or USB.
 
 Author: M9WAV
 License: MIT
-Version: 2.2.0
+Version: 2.2.1
 """
 
 import argparse
