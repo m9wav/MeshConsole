@@ -1426,6 +1426,18 @@
             appState.lastDataHash = null;
             appState.displayedPackets = {};
 
+            // Clear unique locations filter (incompatible with node filter for performance)
+            if (appState.uniqueLocations) {
+                appState.uniqueLocations = false;
+                const uniqueBtn = document.getElementById('unique-locations-toggle');
+                uniqueBtn.classList.remove('btn-primary-modern');
+                uniqueBtn.classList.add('btn-outline-primary');
+            }
+
+            // Clear port filter
+            appState.portFilter = '';
+            document.getElementById('port-filter').value = '';
+
             // Clear and destroy existing maps
             Object.keys(appState.initializedMaps).forEach(mapId => {
                 try {
