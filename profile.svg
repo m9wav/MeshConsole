@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400">
+  <defs>
+    <linearGradient id="waveGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#00ff88"/>
+      <stop offset="100%" style="stop-color:#00cc6a"/>
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="strongGlow">
+      <feGaussianBlur stdDeviation="6" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Dark background -->
+  <rect width="400" height="400" fill="#0a0a0f"/>
+
+  <!-- Scanline effect -->
+  <defs>
+    <pattern id="scanlines" patternUnits="userSpaceOnUse" width="400" height="4">
+      <rect width="400" height="2" fill="transparent"/>
+      <rect y="2" width="400" height="2" fill="rgba(0,0,0,0.1)"/>
+    </pattern>
+  </defs>
+
+  <!-- Wave lines - background layer -->
+  <g fill="none" stroke="#00ff88" opacity="0.15" filter="url(#glow)">
+    <path d="M0 260 Q50 220, 100 260 T200 260 T300 260 T400 260" stroke-width="2"/>
+    <path d="M0 140 Q50 180, 100 140 T200 140 T300 140 T400 140" stroke-width="2"/>
+  </g>
+
+  <!-- Wave lines - mid layer -->
+  <g fill="none" stroke="#00ff88" opacity="0.3" filter="url(#glow)">
+    <path d="M0 230 Q50 180, 100 230 T200 230 T300 230 T400 230" stroke-width="2.5"/>
+    <path d="M0 170 Q50 220, 100 170 T200 170 T300 170 T400 170" stroke-width="2.5"/>
+  </g>
+
+  <!-- Wave lines - main layer -->
+  <g fill="none" stroke="url(#waveGrad)" filter="url(#strongGlow)">
+    <path d="M0 200 Q50 140, 100 200 T200 200 T300 200 T400 200" stroke-width="4" opacity="0.8"/>
+  </g>
+
+  <!-- Central broadcast icon -->
+  <g transform="translate(200, 200)" fill="none" stroke="#00ff88" filter="url(#strongGlow)">
+    <!-- Broadcast waves -->
+    <path d="M-60 0 Q-60 -40, -30 -60" stroke-width="3" opacity="0.3"/>
+    <path d="M-45 0 Q-45 -28, -20 -42" stroke-width="3" opacity="0.5"/>
+    <path d="M-30 0 Q-30 -16, -10 -24" stroke-width="3" opacity="0.7"/>
+
+    <path d="M60 0 Q60 -40, 30 -60" stroke-width="3" opacity="0.3"/>
+    <path d="M45 0 Q45 -28, 20 -42" stroke-width="3" opacity="0.5"/>
+    <path d="M30 0 Q30 -16, 10 -24" stroke-width="3" opacity="0.7"/>
+
+    <path d="M-60 0 Q-60 40, -30 60" stroke-width="3" opacity="0.3"/>
+    <path d="M-45 0 Q-45 28, -20 42" stroke-width="3" opacity="0.5"/>
+    <path d="M-30 0 Q-30 16, -10 24" stroke-width="3" opacity="0.7"/>
+
+    <path d="M60 0 Q60 40, 30 60" stroke-width="3" opacity="0.3"/>
+    <path d="M45 0 Q45 28, 20 42" stroke-width="3" opacity="0.5"/>
+    <path d="M30 0 Q30 16, 10 24" stroke-width="3" opacity="0.7"/>
+
+    <!-- Center dot -->
+    <circle cx="0" cy="0" r="8" fill="#00ff88"/>
+  </g>
+
+  <!-- M9WAV text -->
+  <text x="200" y="340"
+        font-family="Courier New, monospace"
+        font-size="42"
+        font-weight="bold"
+        fill="#00ff88"
+        text-anchor="middle"
+        letter-spacing="0.15em"
+        filter="url(#strongGlow)">M9WAV</text>
+
+  <!-- Scanline overlay -->
+  <rect width="400" height="400" fill="url(#scanlines)" opacity="0.5"/>
+</svg>

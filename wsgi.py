@@ -31,17 +31,21 @@ DEFAULT_CONFIG_FILE = 'config.ini'
 # Global tool instance - initialized lazily per worker
 _tool = None
 _tool_lock = threading.Lock()
+_server_start_time = None
+_connection_start_time = None
 
 def get_tool():
     """Get or initialize the Meshtastic tool (lazy singleton per worker)."""
-    global _tool
+    global _tool, _server_start_time, _connection_start_time
     if _tool is None:
         with _tool_lock:
             if _tool is None:
                 logger.info("Initializing Meshtastic Tool in worker...")
+                _server_start_time = datetime.now()
                 _tool = MeshtasticTool(web_enabled=True)
                 _tool._connect_interface()
-                
+                _connection_start_time = datetime.now()
+
                 # Load recent packets from database
                 _tool._load_recent_packets_from_db()
                 
@@ -75,6 +79,8 @@ def get_tool():
                             time.sleep(retry_delay)
                             try:
                                 _tool._connect_interface()
+                                global _connection_start_time
+                                _connection_start_time = datetime.now()
                                 logger.info("Reconnected successfully")
                                 retry_delay = 1
                             except Exception as re:
@@ -222,6 +228,31 @@ def traceroute():
             return jsonify({'success': False, 'error': 'Timeout', 'timeout': True})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/status')
+def get_status():
+    """Return server status including uptime and connection info."""
+    try:
+        tool = get_tool()
+        now = datetime.now()
+
+        # Calculate uptimes
+        server_uptime_seconds = int((now - _server_start_time).total_seconds()) if _server_start_time else 0
+        connection_uptime_seconds = int((now - _connection_start_time).total_seconds()) if _connection_start_time else 0
+
+        # Check if interface is connected
+        connected = tool.interface is not None
+
+        return jsonify({
+            'connected': connected,
+            'server_start': _server_start_time.isoformat() if _server_start_time else None,
+            'connection_start': _connection_start_time.isoformat() if _connection_start_time else None,
+            'server_uptime_seconds': server_uptime_seconds,
+            'connection_uptime_seconds': connection_uptime_seconds,
+            'local_node_id': tool.local_node_id
+        })
+    except Exception as e:
+        return jsonify({'error': str(e), 'connected': False}), 500
 
 @app.route('/stats')
 def get_stats():
