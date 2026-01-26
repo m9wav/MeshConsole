@@ -302,7 +302,8 @@ def export_data():
     try:
         tool = get_tool()
         fmt = request.args.get('format', 'json')
-        packets = tool.db_handler.fetch_packets()
+        # Only export last 48 hours of data
+        packets = tool.db_handler.fetch_packets(hours=48)
         if fmt == 'json':
             data = [{'timestamp': p[0], 'from_id': p[1], 'to_id': p[2], 'port_name': p[3], 'payload': p[4], 'raw_packet': json.loads(p[5])} for p in packets]
             resp = Response(json.dumps(data, default=tool._json_serializer, indent=2), mimetype='application/json')
