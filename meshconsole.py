@@ -1364,9 +1364,12 @@ class MeshtasticTool:
                         node_id = row[0]
                         raw_packet = json.loads(row[1]) if row[1] else {}
                         user = raw_packet.get('decoded', {}).get('user', {})
+                        db_name = user.get('longName', node_id)
+                        # Prefer in-memory name from device (more up-to-date) over DB
+                        live_name = self.node_name_map.get(node_id)
                         nodes.append({
                             'id': node_id,
-                            'longName': user.get('longName', node_id),
+                            'longName': live_name if live_name and live_name != node_id else db_name,
                             'shortName': user.get('shortName', ''),
                             'hwModel': user.get('hwModel', ''),
                             'lastSeen': row[2]
