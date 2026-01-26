@@ -1,7 +1,21 @@
 #!/usr/bin/env python3
 """
-WSGI entry point for Gunicorn
-Runs the Meshtastic Tool web interface with packet receiving
+WSGI entry point for production deployment with Gunicorn/uWSGI.
+
+This file is OPTIONAL - use it for production deployments with a WSGI server.
+For simple usage, run meshconsole.py directly which has its own built-in Flask server.
+
+STANDALONE MODE (development/simple use):
+    python meshconsole.py --web
+
+PRODUCTION MODE (with Gunicorn - recommended):
+    gunicorn --workers 1 --threads 1 --bind 127.0.0.1:5055 --timeout 120 wsgi:application
+
+Why use this wrapper for production?
+- Better process management and graceful restarts
+- Connection keepalive handling with automatic reconnection
+- Designed for reverse proxy setups (nginx, caddy)
+- Single worker recommended to maintain one device connection
 """
 
 import threading
