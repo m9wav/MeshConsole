@@ -326,4 +326,7 @@ def export_data():
 application = app
 
 if __name__ == '__main__':
-    app.run(host='127.0.0.1', port=5055, debug=False)
+    # Use config values for host/port (for direct execution, though gunicorn is recommended)
+    host = config.get('Web', 'host', fallback='127.0.0.1')
+    port = config.getint('Web', 'port', fallback=5055)
+    app.run(host=host, port=port, debug=False)
