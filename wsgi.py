@@ -267,12 +267,14 @@ def get_nodes():
                 raw_packet = json.loads(row[1]) if row[1] else {}
                 user = raw_packet.get('decoded', {}).get('user', {})
                 db_name = user.get('longName', node_id)
-                # Prefer in-memory name from device (more up-to-date) over DB
+                db_short = user.get('shortName', '')
+                # Prefer in-memory names from device (more up-to-date) over DB
                 live_name = tool.node_name_map.get(node_id)
+                live_short = tool.node_short_name_map.get(node_id) if hasattr(tool, 'node_short_name_map') else None
                 nodes.append({
                     'id': node_id,
                     'longName': live_name if live_name and live_name != node_id else db_name,
-                    'shortName': user.get('shortName', ''),
+                    'shortName': live_short if live_short else db_short,
                     'hwModel': user.get('hwModel', ''),
                     'lastSeen': row[2]
                 })
