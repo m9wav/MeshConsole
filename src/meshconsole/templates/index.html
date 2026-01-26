@@ -1,0 +1,2593 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MeshConsole by M9WAV</title>
+    
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap Icons -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <style>
+        :root {
+            --primary-color: #2563eb;
+            --secondary-color: #64748b;
+            --success-color: #059669;
+            --warning-color: #d97706;
+            --danger-color: #dc2626;
+            --dark-color: #1e293b;
+            --light-color: #f8fafc;
+            --border-color: #e2e8f0;
+        }
+
+        body {
+            background: linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%);
+            min-height: 100vh;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        .main-container {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            margin: 20px;
+            min-height: calc(100vh - 40px);
+        }
+
+        .navbar-custom {
+            background: linear-gradient(135deg, var(--primary-color), #3b82f6);
+            border-radius: 20px 20px 0 0;
+            padding: 1rem 2rem;
+        }
+
+        .navbar-brand {
+            font-weight: 700;
+            font-size: 1.5rem;
+            color: white !important;
+        }
+
+        .nav-tabs-custom {
+            border-bottom: 2px solid var(--border-color);
+            margin-bottom: 2rem;
+        }
+
+        .nav-tabs-custom .nav-link {
+            border: none;
+            color: var(--secondary-color);
+            font-weight: 500;
+            padding: 1rem 1.5rem;
+            margin-right: 0.5rem;
+            border-radius: 10px 10px 0 0;
+            transition: all 0.3s ease;
+        }
+
+        .nav-tabs-custom .nav-link:hover {
+            background: var(--light-color);
+            color: var(--primary-color);
+        }
+
+        .nav-tabs-custom .nav-link.active {
+            background: var(--primary-color);
+            color: white;
+            border-bottom: 3px solid var(--primary-color);
+        }
+
+        .card-modern {
+            border: none;
+            border-radius: 15px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            margin-bottom: 1.5rem;
+        }
+
+        .card-modern:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
+        }
+
+        .card-header-modern {
+            background: linear-gradient(135deg, var(--light-color), #ffffff);
+            border-bottom: 1px solid var(--border-color);
+            border-radius: 15px 15px 0 0 !important;
+            padding: 1.25rem;
+        }
+
+        .btn-modern {
+            border-radius: 10px;
+            font-weight: 500;
+            padding: 0.75rem 1.5rem;
+            transition: all 0.3s ease;
+            border: none;
+        }
+
+        .btn-primary-modern {
+            background: linear-gradient(135deg, var(--primary-color), #3b82f6);
+            color: white;
+        }
+
+        .btn-primary-modern:hover {
+            background: linear-gradient(135deg, #1d4ed8, var(--primary-color));
+            transform: translateY(-1px);
+            box-shadow: 0 4px 15px rgba(37, 99, 235, 0.3);
+        }
+
+        .btn-outline-refresh {
+            background: transparent;
+            color: var(--text-color);
+            border: none;
+        }
+
+        .btn-outline-refresh:hover,
+        .btn-outline-refresh.refreshing {
+            background: linear-gradient(135deg, var(--primary-color), #3b82f6);
+            color: white;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 15px rgba(37, 99, 235, 0.3);
+        }
+
+        .btn-outline-refresh.refreshing i {
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+
+        .btn-success-modern {
+            background: linear-gradient(135deg, var(--success-color), #10b981);
+            color: white;
+        }
+
+        .btn-warning-modern {
+            background: linear-gradient(135deg, var(--warning-color), #f59e0b);
+            color: white;
+        }
+
+        .btn-danger-modern {
+            background: linear-gradient(135deg, var(--danger-color), #ef4444);
+            color: white;
+        }
+
+        .form-control-modern {
+            border: 2px solid var(--border-color);
+            border-radius: 10px;
+            padding: 0.75rem 1rem;
+            transition: all 0.3s ease;
+        }
+
+        .form-control-modern:focus {
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 0.2rem rgba(37, 99, 235, 0.25);
+        }
+
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 0.5rem;
+        }
+
+        .status-online { background-color: var(--success-color); }
+        .status-offline { background-color: var(--danger-color); }
+        .status-warning { background-color: var(--warning-color); }
+
+        .packet-map {
+            height: 200px;
+            border-radius: 10px;
+            margin-top: 1rem;
+        }
+
+        .stats-card {
+            text-align: center;
+            padding: 1.5rem;
+        }
+
+        .stats-number {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: var(--primary-color);
+        }
+
+        .stats-label {
+            color: var(--secondary-color);
+            font-weight: 500;
+            text-transform: uppercase;
+            font-size: 0.875rem;
+            letter-spacing: 0.5px;
+        }
+
+        .alert-modern {
+            border: none;
+            border-radius: 10px;
+            padding: 1rem 1.5rem;
+        }
+
+        .loading-spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top-color: #fff;
+            animation: spin 1s ease-in-out infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .fade-in {
+            animation: fadeIn 0.5s ease-in;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .node-badge {
+            background: linear-gradient(135deg, var(--primary-color), #3b82f6);
+            color: white;
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.875rem;
+            white-space: nowrap;
+            max-width: 150px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            display: inline-block;
+            vertical-align: middle;
+            font-weight: 500;
+        }
+
+        .node-badge-clickable {
+            cursor: pointer;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .node-badge-clickable:hover {
+            transform: scale(1.05);
+            box-shadow: 0 2px 8px rgba(37, 99, 235, 0.4);
+        }
+
+        .node-name-clickable {
+            cursor: pointer;
+            transition: color 0.2s ease;
+        }
+
+        .node-name-clickable:hover {
+            color: var(--primary-color) !important;
+            text-decoration: underline;
+        }
+
+        .filter-indicator {
+            background: linear-gradient(135deg, var(--warning-color), #f59e0b);
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: 10px;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.875rem;
+        }
+
+        .filter-indicator .btn-close {
+            filter: brightness(0) invert(1);
+            opacity: 0.8;
+        }
+
+        .filter-indicator .btn-close:hover {
+            opacity: 1;
+        }
+
+        .message-bubble {
+            background: var(--light-color);
+            border-radius: 15px;
+            padding: 1rem;
+            margin: 0.5rem 0;
+            border-left: 4px solid var(--primary-color);
+        }
+
+        .traceroute-hop {
+            background: rgba(37, 99, 235, 0.1);
+            border-radius: 10px;
+            padding: 0.75rem;
+            margin: 0.5rem 0;
+            border-left: 3px solid var(--primary-color);
+        }
+
+        .progress-modern {
+            height: 8px;
+            border-radius: 10px;
+            background-color: var(--border-color);
+        }
+
+        .progress-bar-modern {
+            border-radius: 10px;
+            background: linear-gradient(135deg, var(--primary-color), #3b82f6);
+        }
+
+        /* Dark mode specific styles */
+        .theme-dark .card-header-modern h6,
+        .theme-dark .card-header-modern .mb-0,
+        .theme-dark .card-header-modern * {
+            color: #f1f5f9 !important;
+        }
+
+        .theme-dark .text-muted {
+            color: #94a3b8 !important;
+        }
+
+        .theme-dark .small {
+            color: #cbd5e1 !important;
+        }
+
+        .theme-dark .card-body .text-muted {
+            color: #94a3b8 !important;
+        }
+
+        .theme-dark footer {
+            background: #1e293b !important;
+            color: #cbd5e1 !important;
+        }
+
+        .theme-dark footer a {
+            color: #60a5fa !important;
+        }
+
+        .theme-dark small,
+        .theme-dark small.text-muted,
+        .theme-dark .card-body small {
+            color: #cbd5e1 !important;
+        }
+
+        /* Auth required banner */
+        .auth-required-banner {
+            border-left: 4px solid #d97706;
+            background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+        }
+
+        .theme-dark .auth-required-banner {
+            background: linear-gradient(135deg, #78350f 0%, #92400e 100%);
+            color: #fef3c7;
+        }
+
+        @media (max-width: 768px) {
+            .main-container {
+                margin: 5px;
+                border-radius: 10px;
+            }
+
+            .navbar-custom {
+                padding: 0.75rem;
+                border-radius: 10px 10px 0 0;
+                flex-wrap: wrap;
+            }
+
+            .navbar-custom .navbar-brand {
+                font-size: 1rem;
+            }
+
+            .navbar-custom .d-flex {
+                flex-wrap: wrap;
+                gap: 0.5rem;
+                font-size: 0.75rem;
+            }
+
+            .nav-tabs-custom {
+                flex-wrap: nowrap;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+                scrollbar-width: none;
+            }
+
+            .nav-tabs-custom::-webkit-scrollbar {
+                display: none;
+            }
+
+            .nav-tabs-custom .nav-link {
+                padding: 0.5rem 0.75rem;
+                font-size: 0.75rem;
+                white-space: nowrap;
+            }
+
+            .nav-tabs-custom .nav-link i {
+                display: none;
+            }
+
+            .container-fluid.p-4 {
+                padding: 0.75rem !important;
+            }
+
+            .card-modern {
+                margin-bottom: 0.75rem;
+            }
+
+            .stats-card .stats-number {
+                font-size: 1.5rem;
+            }
+
+            .stats-card .stats-label {
+                font-size: 0.7rem;
+            }
+
+            #port-filter {
+                width: 100% !important;
+                min-width: unset !important;
+                margin-bottom: 0.5rem;
+            }
+
+            .col-md-6.text-end {
+                text-align: center !important;
+            }
+        }
+
+        @media (max-width: 576px) {
+            .row.mb-3 > .col-md-6:first-child h4 {
+                font-size: 1.1rem;
+            }
+
+            .btn-modern {
+                padding: 0.4rem 0.75rem;
+                font-size: 0.8rem;
+            }
+
+            /* Fix packet card header on mobile - stack elements vertically */
+            .card-header-modern .d-flex.justify-content-between {
+                flex-direction: column;
+                align-items: flex-start !important;
+                gap: 0.5rem;
+            }
+
+            .card-header-modern .d-flex.justify-content-between > div {
+                width: 100%;
+                display: flex;
+                flex-wrap: wrap;
+                gap: 0.25rem;
+            }
+
+            .node-badge {
+                max-width: 120px;
+                font-size: 0.75rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="main-container">
+        <!-- Header -->
+        <nav class="navbar navbar-custom">
+            <div class="container-fluid">
+                <span class="navbar-brand">
+                    <i class="bi bi-broadcast"></i> MeshConsole by <a href="https://m9wav.uk/" target="_blank" rel="noopener" style="color: inherit; text-decoration: none;">M9WAV</a> <a href="https://github.com/m9wav/MeshConsole" target="_blank" rel="noopener" style="color: inherit; margin-left: 8px;"><i class="bi bi-github"></i></a>
+                </span>
+                <div class="d-flex align-items-center text-white">
+                    <span class="status-indicator status-online"></span>
+                    <span id="connection-status">Connected</span>
+                    <span class="ms-3" id="last-update">Last update: Never</span>
+                </div>
+            </div>
+        </nav>
+
+        <div class="container-fluid p-4">
+            <!-- Navigation Tabs -->
+            <ul class="nav nav-tabs nav-tabs-custom" id="mainTabs" role="tablist">
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link active" id="packets-tab" data-bs-toggle="tab" data-bs-target="#packets" type="button" role="tab">
+                        <i class="bi bi-inbox"></i> Live Packets
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="send-tab" data-bs-toggle="tab" data-bs-target="#send" type="button" role="tab">
+                        <i class="bi bi-send"></i> Send Message
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="traceroute-tab" data-bs-toggle="tab" data-bs-target="#traceroute" type="button" role="tab">
+                        <i class="bi bi-diagram-3"></i> Traceroute
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="nodes-tab" data-bs-toggle="tab" data-bs-target="#nodes" type="button" role="tab">
+                        <i class="bi bi-people"></i> Network Nodes
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="stats-tab" data-bs-toggle="tab" data-bs-target="#stats" type="button" role="tab">
+                        <i class="bi bi-graph-up"></i> Statistics
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="settings-tab" data-bs-toggle="tab" data-bs-target="#settings" type="button" role="tab">
+                        <i class="bi bi-gear"></i> Settings
+                    </button>
+                </li>
+            </ul>
+
+            <!-- Tab Content -->
+            <div class="tab-content" id="mainTabContent">
+                <!-- Live Packets Tab -->
+                <div class="tab-pane fade show active" id="packets" role="tabpanel">
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <h4><i class="bi bi-inbox text-primary"></i> Live Packet Stream</h4>
+                            <p class="text-muted">Real-time monitoring of mesh network activity</p>
+                        </div>
+                        <div class="col-md-6 text-end d-flex align-items-center justify-content-end gap-2 flex-wrap">
+                            <div id="node-filter-indicator" style="display: none;"></div>
+                            <select class="form-select form-control-modern" id="port-filter" style="width: auto; min-width: 160px;">
+                                <option value="">All Types</option>
+                                <option value="TEXT_MESSAGE_APP">Messages</option>
+                                <option value="POSITION_APP">Position</option>
+                                <option value="TELEMETRY_APP">Telemetry</option>
+                                <option value="NODEINFO_APP">Node Info</option>
+                                <option value="TRACEROUTE_APP">Traceroute</option>
+                                <option value="ROUTING_APP">Routing</option>
+                                <option value="NEIGHBORINFO_APP">Neighbor Info</option>
+                            </select>
+                            <button class="btn btn-outline-primary btn-modern" id="unique-locations-toggle" title="Show only unique locations (latest position per node)">
+                                <i class="bi bi-geo-alt"></i> Unique Locations
+                            </button>
+                            <button class="btn btn-outline-refresh btn-modern" id="refresh-packets">
+                                <i class="bi bi-arrow-clockwise"></i> Refresh
+                            </button>
+                            <button class="btn btn-success-modern btn-modern" id="auto-refresh-toggle">
+                                <i class="bi bi-play-circle"></i> Auto-refresh: ON
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div id="packets-container">
+                        <!-- Packets will be loaded here -->
+                    </div>
+
+                    <!-- Pagination -->
+                    <div class="d-flex justify-content-between align-items-center mt-4">
+                        <button id="prev-button" class="btn btn-primary-modern btn-modern" disabled>
+                            <i class="bi bi-chevron-left"></i> Previous
+                        </button>
+                        <div class="d-flex align-items-center gap-2">
+                            <span class="text-muted" id="packet-count">Loading packets...</span>
+                            <select id="limit-select" class="form-select form-select-sm" style="width: auto;">
+                                <option value="10" selected>10 per page</option>
+                                <option value="25">25 per page</option>
+                                <option value="50">50 per page</option>
+                                <option value="100">100 per page</option>
+                            </select>
+                        </div>
+                        <button id="next-button" class="btn btn-primary-modern btn-modern">
+                            Next <i class="bi bi-chevron-right"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Send Message Tab -->
+                <div class="tab-pane fade" id="send" role="tabpanel">
+                    <div class="alert alert-warning auth-required-banner mb-3" id="send-auth-banner" style="display: none;">
+                        <i class="bi bi-lock"></i> <strong>Authentication Required</strong> — You must enter the password to send messages.
+                    </div>
+                    <div class="row">
+                        <div class="col-lg-8">
+                            <div class="card card-modern">
+                                <div class="card-header card-header-modern">
+                                    <h5 class="mb-0"><i class="bi bi-send text-primary"></i> Send Message</h5>
+                                </div>
+                                <div class="card-body">
+                                    <form id="send-message-form">
+                                        <div class="mb-3">
+                                            <label for="destination-node" class="form-label">Destination Node</label>
+                                            <select class="form-select form-control-modern" id="destination-node" required>
+                                                <option value="">Select a node...</option>
+                                            </select>
+                                            <div class="form-text">Choose the destination node from your network</div>
+                                        </div>
+                                        <div class="mb-3">
+                                            <label for="message-text" class="form-label">Message</label>
+                                            <textarea class="form-control form-control-modern" id="message-text" rows="4" maxlength="200" placeholder="Enter your message here..." required></textarea>
+                                            <div class="form-text">
+                                                <span id="char-count">0</span>/200 characters
+                                            </div>
+                                        </div>
+                                        <div class="mb-3">
+                                            <div class="form-check">
+                                                <input class="form-check-input" type="checkbox" id="want-ack" checked>
+                                                <label class="form-check-label" for="want-ack">
+                                                    Request acknowledgment
+                                                </label>
+                                            </div>
+                                        </div>
+                                        <button type="submit" class="btn btn-primary-modern btn-modern">
+                                            <i class="bi bi-send"></i> Send Message
+                                        </button>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-lg-4">
+                            <div class="card card-modern">
+                                <div class="card-header card-header-modern">
+                                    <h6 class="mb-0"><i class="bi bi-info-circle text-info"></i> Message Tips</h6>
+                                </div>
+                                <div class="card-body">
+                                    <ul class="list-unstyled">
+                                        <li class="mb-2"><i class="bi bi-check-circle text-success"></i> Keep messages concise</li>
+                                        <li class="mb-2"><i class="bi bi-check-circle text-success"></i> 200 character limit</li>
+                                        <li class="mb-2"><i class="bi bi-check-circle text-success"></i> Acknowledgments help confirm delivery</li>
+                                    </ul>
+                                </div>
+                            </div>
+                            
+                            <div id="send-status" class="mt-3"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Traceroute Tab -->
+                <div class="tab-pane fade" id="traceroute" role="tabpanel">
+                    <div class="alert alert-warning auth-required-banner mb-3" id="traceroute-auth-banner" style="display: none;">
+                        <i class="bi bi-lock"></i> <strong>Authentication Required</strong> — You must enter the password to run traceroute.
+                    </div>
+                    <div class="row">
+                        <div class="col-lg-8">
+                            <div class="card card-modern">
+                                <div class="card-header card-header-modern">
+                                    <h5 class="mb-0"><i class="bi bi-diagram-3 text-primary"></i> Network Traceroute</h5>
+                                </div>
+                                <div class="card-body">
+                                    <form id="traceroute-form">
+                                        <div class="row">
+                                            <div class="col-md-8">
+                                                <label for="traceroute-destination" class="form-label">Destination Node</label>
+                                                <select class="form-select form-control-modern" id="traceroute-destination" required>
+                                                    <option value="">Select a node...</option>
+                                                </select>
+                                            </div>
+                                            <div class="col-md-4">
+                                                <label for="hop-limit" class="form-label">Hop Limit</label>
+                                                <input type="number" class="form-control form-control-modern" id="hop-limit" value="10" min="1" max="30">
+                                            </div>
+                                        </div>
+                                        <div class="mt-3">
+                                            <button type="submit" class="btn btn-warning-modern btn-modern">
+                                                <i class="bi bi-play-circle"></i> Start Traceroute
+                                            </button>
+                                        </div>
+                                    </form>
+                                </div>
+                            </div>
+                            
+                            <div id="traceroute-results" class="mt-4"></div>
+                        </div>
+                        <div class="col-lg-4">
+                            <div class="card card-modern">
+                                <div class="card-header card-header-modern">
+                                    <h6 class="mb-0"><i class="bi bi-info-circle text-info"></i> About Traceroute</h6>
+                                </div>
+                                <div class="card-body">
+                                    <p>Traceroute shows the path packets take through the mesh network to reach their destination.</p>
+                                    <ul class="list-unstyled">
+                                        <li class="mb-2"><i class="bi bi-arrow-right text-primary"></i> Shows intermediate hops</li>
+                                        <li class="mb-2"><i class="bi bi-arrow-right text-primary"></i> Displays signal strength (SNR)</li>
+                                        <li class="mb-2"><i class="bi bi-arrow-right text-primary"></i> Helps diagnose connectivity</li>
+                                        <li class="mb-2"><i class="bi bi-arrow-right text-primary"></i> Reveals network topology</li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Network Nodes Tab -->
+                <div class="tab-pane fade" id="nodes" role="tabpanel">
+                    <div class="row mb-3">
+                        <div class="col-md-4">
+                            <h4><i class="bi bi-people text-primary"></i> Network Nodes</h4>
+                            <p class="text-muted">Discovered nodes in your mesh network</p>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="bi bi-search"></i></span>
+                                <input type="text" class="form-control" id="node-search" placeholder="Search nodes...">
+                            </div>
+                        </div>
+                        <div class="col-md-4 text-end">
+                            <button class="btn btn-primary-modern btn-modern" id="refresh-nodes">
+                                <i class="bi bi-arrow-clockwise"></i> Refresh Nodes
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="row" id="nodes-container">
+                        <!-- Nodes will be loaded here -->
+                    </div>
+                </div>
+
+                <!-- Statistics Tab -->
+                <div class="tab-pane fade" id="stats" role="tabpanel">
+                    <div class="row mb-4">
+                        <div class="col-md-3">
+                            <div class="card card-modern stats-card">
+                                <div class="card-body">
+                                    <div class="stats-number" id="total-packets">0</div>
+                                    <div class="stats-label">Total Packets</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card card-modern stats-card">
+                                <div class="card-body">
+                                    <div class="stats-number" id="total-nodes">0</div>
+                                    <div class="stats-label">Network Nodes</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card card-modern stats-card">
+                                <div class="card-body">
+                                    <div class="stats-number" id="messages-today">0</div>
+                                    <div class="stats-label">Messages Today</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card card-modern stats-card">
+                                <div class="card-body">
+                                    <div class="stats-number" id="uptime">0h</div>
+                                    <div class="stats-label">Session Uptime</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-lg-8">
+                            <div class="card card-modern">
+                                <div class="card-header card-header-modern">
+                                    <h5 class="mb-0"><i class="bi bi-graph-up text-primary"></i> Packet Activity</h5>
+                                </div>
+                                <div class="card-body">
+                                    <canvas id="activity-chart" height="100"></canvas>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-lg-4">
+                            <div class="card card-modern">
+                                <div class="card-header card-header-modern">
+                                    <h5 class="mb-0"><i class="bi bi-pie-chart text-primary"></i> Port Usage</h5>
+                                </div>
+                                <div class="card-body">
+                                    <canvas id="port-chart"></canvas>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row mt-4">
+                        <div class="col-12">
+                            <div class="card card-modern">
+                                <div class="card-header card-header-modern">
+                                    <h5 class="mb-0"><i class="bi bi-chat-dots text-success"></i> Message Activity</h5>
+                                </div>
+                                <div class="card-body">
+                                    <canvas id="message-chart" height="80"></canvas>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Settings Tab -->
+                <div class="tab-pane fade" id="settings" role="tabpanel">
+                    <div class="row">
+                        <div class="col-lg-8">
+                            <div class="card card-modern">
+                                <div class="card-header card-header-modern">
+                                    <h5 class="mb-0"><i class="bi bi-gear text-primary"></i> Application Settings</h5>
+                                </div>
+                                <div class="card-body">
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <div class="mb-3">
+                                                <label class="form-label">Auto-refresh Interval</label>
+                                                <select class="form-select form-control-modern" id="refresh-interval">
+                                                    <option value="5000" selected>5 seconds</option>
+                                                    <option value="10000">10 seconds</option>
+                                                    <option value="30000">30 seconds</option>
+                                                    <option value="60000">1 minute</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="mb-3">
+                                                <label class="form-label">Theme</label>
+                                                <select class="form-select form-control-modern" id="theme-select">
+                                                    <option value="light" selected>Light</option>
+                                                    <option value="dark">Dark</option>
+                                                    <option value="auto">Auto</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="form-check mb-3">
+                                        <input class="form-check-input" type="checkbox" id="sound-notifications" checked>
+                                        <label class="form-check-label" for="sound-notifications">
+                                            Sound notifications for new messages
+                                        </label>
+                                    </div>
+                                    
+                                    <div class="form-check mb-3">
+                                        <input class="form-check-input" type="checkbox" id="desktop-notifications">
+                                        <label class="form-check-label" for="desktop-notifications">
+                                            Desktop notifications
+                                        </label>
+                                    </div>
+                                    
+                                    <button class="btn btn-success-modern btn-modern" id="save-settings">
+                                        <i class="bi bi-check-circle"></i> Save Settings
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-lg-4">
+                            <div class="card card-modern">
+                                <div class="card-header card-header-modern">
+                                    <h6 class="mb-0"><i class="bi bi-download text-success"></i> Export Data</h6>
+                                </div>
+                                <div class="card-body">
+                                    <p>Export mesh network data from the <strong>last 48 hours</strong> for analysis or backup.</p>
+                                    <div class="d-grid gap-2">
+                                        <button class="btn btn-success-modern btn-modern" id="export-json">
+                                            <i class="bi bi-file-earmark-code"></i> Export as JSON
+                                        </button>
+                                        <button class="btn btn-success-modern btn-modern" id="export-csv">
+                                            <i class="bi bi-file-earmark-spreadsheet"></i> Export as CSV
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="card card-modern mt-3">
+                                <div class="card-header card-header-modern">
+                                    <h6 class="mb-0"><i class="bi bi-info-circle text-info"></i> System Info</h6>
+                                </div>
+                                <div class="card-body">
+                                    <small class="text-muted">
+                                        <div>Version: 2.1.0</div>
+                                        <div>Local Node: <span id="local-node">Detecting...</span></div>
+                                        <div>Session: <span id="session-start">Just started</span></div>
+                                    </small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Map Modal -->
+    <div class="modal fade" id="mapModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-geo-alt"></i> Location Details</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="modal-mapid" style="height: 400px; border-radius: 10px;"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <!-- Main Application Script -->
+    <script>
+        // Application state
+        let appState = {
+            offset: 0,
+            limit: 10,
+            autoRefresh: true,
+            refreshInterval: 5000,
+            initializedMaps: {},
+            displayedPackets: {},
+            autoRefreshTimer: null,
+            sessionStart: null, // Will be loaded from localStorage or set fresh
+            lastDataHash: null,
+            nodes: {},
+            portFilter: '',
+            nodeFilter: null, // {id: '!abc123', name: 'NodeName'}
+            uniqueLocations: false,
+            stats: {
+                totalPackets: 0,
+                totalNodes: 0,
+                messagesToday: 0,
+                portUsage: {}
+            }
+        };
+
+        // Initialize application
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeApp();
+            setupEventListeners();
+            loadInitialData();
+        });
+
+        function initializeApp() {
+            // Session time will be fetched from server via updateUptime()
+            document.getElementById('session-start').textContent = 'Loading...';
+            
+            // Initialize charts
+            initializeCharts();
+            
+            // Start auto-refresh (hide manual refresh button since auto is ON by default)
+            startAutoRefresh();
+            document.getElementById('refresh-packets').style.display = 'none';
+            
+            // Setup character counter
+            const messageText = document.getElementById('message-text');
+            const charCount = document.getElementById('char-count');
+            messageText.addEventListener('input', function() {
+                charCount.textContent = this.value.length;
+            });
+        }
+
+        function setupEventListeners() {
+            // Packet navigation
+            document.getElementById('prev-button').addEventListener('click', () => {
+                appState.offset = Math.max(0, appState.offset - appState.limit);
+                fetchPackets();
+                document.getElementById('packets-container').scrollIntoView({ behavior: 'smooth' });
+            });
+
+            document.getElementById('next-button').addEventListener('click', () => {
+                appState.offset += appState.limit;
+                fetchPackets();
+                document.getElementById('packets-container').scrollIntoView({ behavior: 'smooth' });
+            });
+
+            // Refresh buttons
+            document.getElementById('refresh-packets').addEventListener('click', fetchPackets);
+            document.getElementById('refresh-nodes').addEventListener('click', fetchNodes);
+
+            // Limit selector
+            document.getElementById('limit-select').addEventListener('change', function() {
+                appState.limit = parseInt(this.value);
+                appState.offset = 0;
+                fetchPackets();
+            });
+
+            // Port filter
+            document.getElementById('port-filter').addEventListener('change', function() {
+                appState.portFilter = this.value;
+                appState.offset = 0;
+                appState.lastDataHash = null; // Force re-render
+                appState.displayedPackets = {}; // Clear displayed packets
+                // Clear and destroy existing maps to prevent conflicts
+                Object.keys(appState.initializedMaps).forEach(mapId => {
+                    try {
+                        appState.initializedMaps[mapId].remove();
+                    } catch (e) {}
+                });
+                appState.initializedMaps = {};
+                fetchPackets();
+            });
+
+            // Unique locations toggle
+            document.getElementById('unique-locations-toggle').addEventListener('click', function() {
+                appState.uniqueLocations = !appState.uniqueLocations;
+                appState.offset = 0;
+                appState.lastDataHash = null;
+                appState.displayedPackets = {};
+                // Clear maps
+                Object.keys(appState.initializedMaps).forEach(mapId => {
+                    try { appState.initializedMaps[mapId].remove(); } catch (e) {}
+                });
+                appState.initializedMaps = {};
+                // Update button appearance
+                if (appState.uniqueLocations) {
+                    this.classList.remove('btn-outline-primary');
+                    this.classList.add('btn-primary-modern');
+                    // Auto-set port filter to Position when unique locations is enabled
+                    document.getElementById('port-filter').value = 'POSITION_APP';
+                    appState.portFilter = 'POSITION_APP';
+                    // Turn off auto-refresh for unique locations (it's a snapshot view)
+                    if (appState.autoRefresh) {
+                        toggleAutoRefresh();
+                    }
+                } else {
+                    this.classList.remove('btn-primary-modern');
+                    this.classList.add('btn-outline-primary');
+                }
+                fetchPackets();
+            });
+
+            // Auto-refresh toggle
+            document.getElementById('auto-refresh-toggle').addEventListener('click', toggleAutoRefresh);
+
+            // Form submissions
+            document.getElementById('send-message-form').addEventListener('submit', sendMessage);
+            document.getElementById('traceroute-form').addEventListener('submit', startTraceroute);
+
+            // Settings
+            document.getElementById('save-settings').addEventListener('click', saveSettings);
+            document.getElementById('export-json').addEventListener('click', () => exportData('json'));
+            document.getElementById('export-csv').addEventListener('click', () => exportData('csv'));
+
+            // Tab switching
+            document.querySelectorAll('[data-bs-toggle="tab"]').forEach(tab => {
+                tab.addEventListener('shown.bs.tab', function(e) {
+                    const target = e.target.getAttribute('data-bs-target');
+                    if (target === '#nodes') {
+                        fetchNodes();
+                    } else if (target === '#stats') {
+                        fetchStats();
+                    }
+                });
+            });
+
+            // Node search filter
+            document.getElementById('node-search').addEventListener('input', function(e) {
+                filterNodes(e.target.value);
+            });
+        }
+
+        function loadInitialData() {
+            checkAuthStatus().then(() => {
+                fetchPackets();
+                fetchNodes();
+                fetchStats();
+                updateUptime();
+                updateSystemInfo();
+                setInterval(updateUptime, 60000); // Update every minute
+            });
+        }
+
+        function startAutoRefresh() {
+            if (appState.autoRefresh) {
+                appState.autoRefreshTimer = setInterval(fetchPackets, appState.refreshInterval);
+            }
+        }
+
+        function toggleAutoRefresh() {
+            appState.autoRefresh = !appState.autoRefresh;
+            const button = document.getElementById('auto-refresh-toggle');
+            const refreshBtn = document.getElementById('refresh-packets');
+
+            if (appState.autoRefresh) {
+                button.innerHTML = '<i class="bi bi-pause-circle"></i> Auto-refresh: ON';
+                button.className = 'btn btn-success-modern btn-modern ms-2';
+                refreshBtn.style.display = 'none';
+                startAutoRefresh();
+            } else {
+                button.innerHTML = '<i class="bi bi-play-circle"></i> Auto-refresh: OFF';
+                button.className = 'btn btn-warning-modern btn-modern ms-2';
+                refreshBtn.style.display = '';
+                if (appState.autoRefreshTimer) {
+                    clearInterval(appState.autoRefreshTimer);
+                    appState.autoRefreshTimer = null;
+                }
+            }
+        }
+
+        function fetchPackets() {
+            const filterParam = appState.portFilter ? `&port_filter=${appState.portFilter}` : '';
+            const nodeFilterParam = appState.nodeFilter ? `&node_filter=${encodeURIComponent(appState.nodeFilter.id)}` : '';
+            const uniqueLocationsParam = appState.uniqueLocations ? '&unique_locations=1' : '';
+            fetch(`/packets?limit=${appState.limit}&offset=${appState.offset}${filterParam}${nodeFilterParam}${uniqueLocationsParam}`)
+                .then(response => response.json())
+                .then(response => {
+                    const packets = response.packets || response;
+                    const total = response.total || packets.length;
+
+                    // Check if data has actually changed before re-rendering
+                    const dataHash = JSON.stringify(packets);
+                    if (appState.lastDataHash !== dataHash) {
+                        renderPackets(packets);
+                        appState.lastDataHash = dataHash;
+                    }
+
+                    updateLastUpdate();
+
+                    // Update navigation buttons
+                    document.getElementById('prev-button').disabled = appState.offset === 0;
+                    document.getElementById('next-button').disabled = packets.length < appState.limit;
+
+                    // Update packet count
+                    const start = packets.length > 0 ? appState.offset + 1 : 0;
+                    const end = appState.offset + packets.length;
+                    const filterText = appState.portFilter ? ` (${appState.portFilter})` : '';
+                    document.getElementById('packet-count').textContent =
+                        `Showing ${start}-${end} of ${total} packets${filterText}`;
+                })
+                .catch(error => {
+                    console.error('Error fetching packets:', error);
+                    showAlert('Error fetching packets. Please try again.', 'danger');
+                });
+        }
+
+        function renderPackets(data) {
+            const container = document.getElementById('packets-container');
+            container.innerHTML = '';
+
+            if (data.length === 0) {
+                container.innerHTML = `
+                    <div class="card card-modern">
+                        <div class="card-body text-center">
+                            <i class="bi bi-inbox display-1 text-muted"></i>
+                            <h5 class="mt-3">No packets found</h5>
+                            <p class="text-muted">No mesh network activity detected yet.</p>
+                        </div>
+                    </div>
+                `;
+                return;
+            }
+
+            data.forEach((packet, index) => {
+                const card = createPacketCard(packet, index);
+                container.appendChild(card);
+            });
+        }
+
+        function resolveNodeName(packet, field) {
+            // Get the name and id for the field (from or to)
+            const name = field === 'from' ? packet.from_name : packet.to_name;
+            const id = field === 'from' ? packet.from_id : packet.to_id;
+
+            // If name is resolved (not equal to id), use it
+            if (name && name !== id) {
+                return name;
+            }
+
+            // Fallback: for NODEINFO packets, try to get name from raw_packet
+            if (packet.port_name === 'NODEINFO_APP' && field === 'from') {
+                const longName = packet.raw_packet?.decoded?.user?.longName;
+                if (longName) {
+                    return longName;
+                }
+            }
+
+            // Return the original name (or id if name was empty)
+            return name || id;
+        }
+
+        function createPacketCard(packet, index) {
+            const card = document.createElement('div');
+            card.className = 'card card-modern fade-in';
+
+            const timestamp = new Date(packet.timestamp).toLocaleString();
+            const portIcon = getPortIcon(packet.port_name);
+            const fromName = resolveNodeName(packet, 'from');
+            const toName = resolveNodeName(packet, 'to');
+            const fromId = packet.from_id;
+            const toId = packet.to_id;
+
+            // Escape names for use in onclick attributes
+            const fromNameEscaped = fromName.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+            const toNameEscaped = toName.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+
+            card.innerHTML = `
+                <div class="card-header card-header-modern">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <h6 class="mb-0">
+                            ${portIcon} ${packet.port_name} - ${timestamp}
+                        </h6>
+                        <div>
+                            <span class="node-badge node-badge-clickable" onclick="filterByNode('${fromId}', '${fromNameEscaped}')" title="Filter by this node">${fromName}</span>
+                            <i class="bi bi-arrow-right mx-2"></i>
+                            <span class="node-badge node-badge-clickable" onclick="filterByNode('${toId}', '${toNameEscaped}')" title="Filter by this node">${toName}</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-body">
+                    ${renderPacketContent(packet, index)}
+                    <div class="row mt-3 text-muted small">
+                        <div class="col-md-6">
+                            <i class="bi bi-signal"></i> RSSI: ${packet.rssi} dBm | SNR: ${packet.snr} dB
+                        </div>
+                        <div class="col-md-6 text-end">
+                            <i class="bi bi-layers"></i> Hop Limit: ${packet.hop_limit || 'N/A'}
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            return card;
+        }
+
+        function renderPacketContent(packet, index) {
+            switch (packet.port_name) {
+                case 'TEXT_MESSAGE_APP':
+                    return `
+                        <div class="message-bubble">
+                            <i class="bi bi-chat-text text-primary"></i>
+                            <strong>Message:</strong> ${packet.message || '(No text)'}
+                        </div>
+                    `;
+                
+                case 'POSITION_APP':
+                    const mapId = `map-${packet.timestamp}-${index}`;
+                    setTimeout(() => initializePacketMap(mapId, packet.latitude, packet.longitude), 100);
+                    return `
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h6><i class="bi bi-geo-alt text-success"></i> Position Data</h6>
+                                <ul class="list-unstyled">
+                                    <li><strong>Latitude:</strong> ${packet.latitude}</li>
+                                    <li><strong>Longitude:</strong> ${packet.longitude}</li>
+                                    <li><strong>Altitude:</strong> ${packet.altitude}m</li>
+                                </ul>
+                                <button class="btn btn-primary-modern btn-sm" onclick="showExpandedMap(${packet.latitude}, ${packet.longitude})">
+                                    <i class="bi bi-arrows-fullscreen"></i> Expand Map
+                                </button>
+                            </div>
+                            <div class="col-md-6">
+                                <div id="${mapId}" class="packet-map"></div>
+                            </div>
+                        </div>
+                    `;
+                
+                case 'TELEMETRY_APP':
+                    return `
+                        <h6><i class="bi bi-speedometer text-info"></i> Telemetry Data</h6>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <ul class="list-unstyled">
+                                    <li><i class="bi bi-battery"></i> Battery: ${packet.battery_level || 'N/A'}%</li>
+                                    <li><i class="bi bi-lightning"></i> Voltage: ${packet.voltage || 'N/A'}V</li>
+                                </ul>
+                            </div>
+                            <div class="col-md-6">
+                                <ul class="list-unstyled">
+                                    <li><i class="bi bi-wifi"></i> Channel Util: ${packet.channel_util || 'N/A'}%</li>
+                                    <li><i class="bi bi-clock"></i> Uptime: ${packet.uptime_hours || 0}h ${packet.uptime_minutes || 0}m</li>
+                                </ul>
+                            </div>
+                        </div>
+                    `;
+                
+                case 'NODEINFO_APP':
+                    const nodeInfo = packet.raw_packet?.decoded?.user || {};
+                    return `
+                        <h6><i class="bi bi-info-circle text-warning"></i> Node Information</h6>
+                        <ul class="list-unstyled">
+                            <li><strong>Long Name:</strong> ${nodeInfo.longName || 'Unknown'}</li>
+                            <li><strong>Short Name:</strong> ${nodeInfo.shortName || 'Unknown'}</li>
+                            <li><strong>Hardware:</strong> ${nodeInfo.hwModel || 'Unknown'}</li>
+                        </ul>
+                    `;
+                
+                case 'TRACEROUTE_APP':
+                    return `
+                        <h6><i class="bi bi-diagram-3 text-primary"></i> Traceroute Data</h6>
+                        <p>Traceroute response received. Check the Traceroute tab for detailed analysis.</p>
+                    `;
+                
+                default:
+                    return `
+                        <h6><i class="bi bi-question-circle text-secondary"></i> Unknown Packet Type</h6>
+                        <p>Port: ${packet.port_name}</p>
+                    `;
+            }
+        }
+
+        function getPortIcon(portName) {
+            const icons = {
+                'TEXT_MESSAGE_APP': '<i class="bi bi-chat-text text-primary"></i>',
+                'POSITION_APP': '<i class="bi bi-geo-alt text-success"></i>',
+                'TELEMETRY_APP': '<i class="bi bi-speedometer text-info"></i>',
+                'NODEINFO_APP': '<i class="bi bi-info-circle text-warning"></i>',
+                'TRACEROUTE_APP': '<i class="bi bi-diagram-3 text-primary"></i>',
+                'ROUTING_APP': '<i class="bi bi-signpost text-secondary"></i>'
+            };
+            return icons[portName] || '<i class="bi bi-question-circle text-muted"></i>';
+        }
+
+        function initializePacketMap(mapId, lat, lon) {
+            if (!lat || !lon || appState.initializedMaps[mapId]) return;
+            
+            try {
+                // Wait a bit longer for the DOM element to be fully rendered
+                setTimeout(() => {
+                    const mapElement = document.getElementById(mapId);
+                    if (!mapElement) {
+                        console.warn(`Map element ${mapId} not found`);
+                        return;
+                    }
+                    
+                    const map = L.map(mapId).setView([lat, lon], 13);
+                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                        attribution: '© OpenStreetMap contributors',
+                        maxZoom: 18,
+                    }).addTo(map);
+                    
+                    L.marker([lat, lon]).addTo(map)
+                        .bindPopup(`Lat: ${lat}<br>Lon: ${lon}`)
+                        .openPopup();
+                    
+                    // Force map to resize after initialization
+                    setTimeout(() => {
+                        map.invalidateSize();
+                    }, 100);
+                    
+                    appState.initializedMaps[mapId] = map;
+                }, 200);
+            } catch (error) {
+                console.error('Error initializing map:', error);
+            }
+        }
+
+        function showExpandedMap(lat, lon) {
+            const modal = new bootstrap.Modal(document.getElementById('mapModal'));
+            modal.show();
+            
+            setTimeout(() => {
+                if (window.modalMap) {
+                    window.modalMap.setView([lat, lon], 15);
+                    if (window.modalMarker) {
+                        window.modalMarker.setLatLng([lat, lon]);
+                    } else {
+                        window.modalMarker = L.marker([lat, lon]).addTo(window.modalMap);
+                    }
+                } else {
+                    window.modalMap = L.map('modal-mapid').setView([lat, lon], 15);
+                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                        attribution: '© OpenStreetMap contributors',
+                        maxZoom: 18,
+                    }).addTo(window.modalMap);
+                    
+                    window.modalMarker = L.marker([lat, lon]).addTo(window.modalMap)
+                        .bindPopup(`Latitude: ${lat}<br>Longitude: ${lon}`)
+                        .openPopup();
+                }
+                window.modalMap.invalidateSize();
+            }, 300);
+        }
+
+        function fetchNodes() {
+            // Fetch node info from dedicated endpoint, then update with recent packet activity
+            Promise.all([
+                fetch('/nodes').then(r => r.json()),
+                fetch('/packets?limit=500&offset=0').then(r => r.json())
+            ]).then(([nodesResponse, packetsResponse]) => {
+                const nodes = {};
+
+                // First, populate from /nodes endpoint (has all NODEINFO data including shortNames)
+                (nodesResponse.nodes || []).forEach(node => {
+                    nodes[node.id] = {
+                        id: node.id,
+                        name: node.longName || node.id,
+                        shortName: node.shortName || '',
+                        hwModel: node.hwModel || '',
+                        lastSeen: node.lastSeen
+                    };
+                });
+
+                // Then update lastSeen from recent packets (more accurate activity times)
+                const packets = packetsResponse.packets || packetsResponse;
+                packets.forEach(packet => {
+                    if (packet.from_id) {
+                        if (nodes[packet.from_id]) {
+                            // Update lastSeen if packet is more recent
+                            if (new Date(packet.timestamp) > new Date(nodes[packet.from_id].lastSeen)) {
+                                nodes[packet.from_id].lastSeen = packet.timestamp;
+                            }
+                        } else {
+                            // Node not in NODEINFO, add from packet
+                            nodes[packet.from_id] = {
+                                id: packet.from_id,
+                                name: packet.from_name || packet.from_id || 'Unknown',
+                                shortName: '',
+                                lastSeen: packet.timestamp
+                            };
+                        }
+                    }
+                });
+
+                appState.nodes = nodes;
+                // Sort by lastSeen descending (most recent first)
+                const sortedNodes = Object.values(nodes).sort((a, b) =>
+                    new Date(b.lastSeen) - new Date(a.lastSeen)
+                );
+                appState.sortedNodes = sortedNodes;
+                renderNodes(sortedNodes);
+                populateNodeSelects(sortedNodes);
+            }).catch(error => {
+                console.error('Error fetching nodes:', error);
+            });
+        }
+
+        function filterNodes(searchTerm) {
+            if (!appState.sortedNodes) return;
+            const term = searchTerm.toLowerCase();
+            const filtered = appState.sortedNodes.filter(node =>
+                (node.name && node.name.toLowerCase().includes(term)) ||
+                (node.id && node.id.toLowerCase().includes(term)) ||
+                (node.shortName && node.shortName.toLowerCase().includes(term))
+            );
+            renderNodes(filtered);
+        }
+
+        function filterByNode(nodeId, nodeName) {
+            // Set the node filter
+            appState.nodeFilter = { id: nodeId, name: nodeName };
+            appState.offset = 0;
+            appState.lastDataHash = null;
+            appState.displayedPackets = {};
+
+            // Clear unique locations filter (incompatible with node filter for performance)
+            if (appState.uniqueLocations) {
+                appState.uniqueLocations = false;
+                const uniqueBtn = document.getElementById('unique-locations-toggle');
+                uniqueBtn.classList.remove('btn-primary-modern');
+                uniqueBtn.classList.add('btn-outline-primary');
+            }
+
+            // Clear port filter
+            appState.portFilter = '';
+            document.getElementById('port-filter').value = '';
+
+            // Clear and destroy existing maps
+            Object.keys(appState.initializedMaps).forEach(mapId => {
+                try {
+                    appState.initializedMaps[mapId].remove();
+                } catch (e) {}
+            });
+            appState.initializedMaps = {};
+
+            // Update the filter indicator
+            updateNodeFilterIndicator();
+
+            // Switch to Live Packets tab if not already there
+            const packetsTab = document.getElementById('packets-tab');
+            if (!packetsTab.classList.contains('active')) {
+                const tab = new bootstrap.Tab(packetsTab);
+                tab.show();
+            }
+
+            // Fetch filtered packets
+            fetchPackets();
+        }
+
+        function clearNodeFilter() {
+            appState.nodeFilter = null;
+            appState.offset = 0;
+            appState.lastDataHash = null;
+            appState.displayedPackets = {};
+
+            // Clear and destroy existing maps
+            Object.keys(appState.initializedMaps).forEach(mapId => {
+                try {
+                    appState.initializedMaps[mapId].remove();
+                } catch (e) {}
+            });
+            appState.initializedMaps = {};
+
+            // Update the filter indicator
+            updateNodeFilterIndicator();
+
+            // Fetch unfiltered packets
+            fetchPackets();
+        }
+
+        function updateNodeFilterIndicator() {
+            const indicator = document.getElementById('node-filter-indicator');
+            if (appState.nodeFilter) {
+                indicator.innerHTML = `
+                    <span class="filter-indicator">
+                        <i class="bi bi-funnel-fill"></i>
+                        Filtering: ${appState.nodeFilter.name}
+                        <button type="button" class="btn-close btn-close-white btn-sm" onclick="clearNodeFilter()" title="Clear filter"></button>
+                    </span>
+                `;
+                indicator.style.display = 'inline-block';
+            } else {
+                indicator.innerHTML = '';
+                indicator.style.display = 'none';
+            }
+        }
+
+        function renderNodes(nodes) {
+            const container = document.getElementById('nodes-container');
+            container.innerHTML = '';
+            
+            if (nodes.length === 0) {
+                container.innerHTML = `
+                    <div class="col-12">
+                        <div class="card card-modern">
+                            <div class="card-body text-center">
+                                <i class="bi bi-people display-1 text-muted"></i>
+                                <h5 class="mt-3">No nodes discovered</h5>
+                                <p class="text-muted">No network nodes have been detected yet.</p>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                return;
+            }
+            
+            nodes.forEach(node => {
+                const nodeCard = document.createElement('div');
+                nodeCard.className = 'col-md-6 col-lg-4';
+                const shortNameDisplay = node.shortName ? `<span class="badge bg-secondary ms-2">${node.shortName}</span>` : '';
+                const nodeNameEscaped = node.name.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                nodeCard.innerHTML = `
+                    <div class="card card-modern">
+                        <div class="card-body">
+                            <div class="d-flex align-items-center mb-3">
+                                <div class="status-indicator status-online"></div>
+                                <h6 class="mb-0 node-name-clickable" onclick="filterByNode('${node.id}', '${nodeNameEscaped}')" title="View traffic from this node">${node.name}${shortNameDisplay}</h6>
+                            </div>
+                            <p class="text-muted small mb-2">
+                                <i class="bi bi-hash"></i> ${node.id}
+                            </p>
+                            <p class="text-muted small mb-0">
+                                <i class="bi bi-clock"></i> Last seen: ${new Date(node.lastSeen).toLocaleString()}
+                            </p>
+                        </div>
+                    </div>
+                `;
+                container.appendChild(nodeCard);
+            });
+        }
+
+        function populateNodeSelects(nodes) {
+            const selects = ['destination-node', 'traceroute-destination'];
+            selects.forEach(selectId => {
+                const select = document.getElementById(selectId);
+                select.innerHTML = '<option value="">Select a node...</option>';
+                nodes.forEach(node => {
+                    const option = document.createElement('option');
+                    option.value = node.id;
+                    option.textContent = `${node.name} (${node.id})`;
+                    select.appendChild(option);
+                });
+            });
+        }
+
+        function sendMessage(event) {
+            event.preventDefault();
+            
+            requireAuth(() => {
+                const destination = document.getElementById('destination-node').value;
+                const message = document.getElementById('message-text').value;
+                const wantAck = document.getElementById('want-ack').checked;
+                
+                if (!destination || !message) {
+                    showAlert('Please select a destination and enter a message.', 'warning');
+                    return;
+                }
+                
+                // Show loading state
+                const submitBtn = event.target.querySelector('button[type="submit"]');
+                const originalText = submitBtn.innerHTML;
+                submitBtn.innerHTML = '<span class="loading-spinner"></span> Sending...';
+                submitBtn.disabled = true;
+                
+                // Call API to send message
+                fetch('/send-message', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    destination: destination,
+                    message: message,
+                    wantAck: wantAck
+                })
+            })
+            .then(response => {
+                if (response.status === 401) {
+                    // Authentication required or expired
+                    authState.authenticated = false;
+                    updateAuthUI();
+                    return response.json().then(data => {
+                        if (data.auth_required) {
+                            // Re-trigger authentication
+                            requireAuth(() => {
+                                // Retry the send operation
+                                document.getElementById('send-message-form').dispatchEvent(new Event('submit'));
+                            });
+                        }
+                        throw new Error(data.error || 'Authentication required');
+                    });
+                }
+                return response.json();
+            })
+            .then(data => {
+                if (data.success) {
+                    showAlert('Message sent successfully!', 'success');
+                    document.getElementById('message-text').value = '';
+                    document.getElementById('char-count').textContent = '0';
+                } else {
+                    showAlert('Failed to send message: ' + (data.error || 'Unknown error'), 'danger');
+                }
+            })
+                .catch(error => {
+                    console.error('Error sending message:', error);
+                    showAlert('Error sending message. Please try again.', 'danger');
+                })
+                .finally(() => {
+                    submitBtn.innerHTML = originalText;
+                    submitBtn.disabled = false;
+                });
+            });
+        }
+
+        function startTraceroute(event) {
+            event.preventDefault();
+            
+            requireAuth(() => {
+                const destination = document.getElementById('traceroute-destination').value;
+                const hopLimit = document.getElementById('hop-limit').value;
+                
+                if (!destination) {
+                    showAlert('Please select a destination node.', 'warning');
+                    return;
+                }
+                
+                const submitBtn = event.target.querySelector('button[type="submit"]');
+                const originalText = submitBtn.innerHTML;
+                submitBtn.innerHTML = '<span class="loading-spinner"></span> Running...';
+                submitBtn.disabled = true;
+                
+                // Show progress
+                const resultsContainer = document.getElementById('traceroute-results');
+                resultsContainer.innerHTML = `
+                    <div class="card card-modern">
+                        <div class="card-body">
+                            <h6><i class="bi bi-hourglass-split"></i> Running traceroute to ${destination}...</h6>
+                            <div class="progress progress-modern mt-3">
+                                <div class="progress-bar progress-bar-modern progress-bar-striped progress-bar-animated" 
+                                     style="width: 100%"></div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                
+                // Call traceroute API
+                fetch('/traceroute', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    destination: destination,
+                    hopLimit: parseInt(hopLimit)
+                })
+            })
+            .then(response => {
+                if (response.status === 401) {
+                    // Authentication required or expired
+                    authState.authenticated = false;
+                    updateAuthUI();
+                    return response.json().then(data => {
+                        if (data.auth_required) {
+                            // Re-trigger authentication
+                            requireAuth(() => {
+                                // Retry the traceroute operation
+                                document.getElementById('traceroute-form').dispatchEvent(new Event('submit'));
+                            });
+                        }
+                        throw new Error(data.error || 'Authentication required');
+                    });
+                }
+                return response.json();
+            })
+            .then(data => {
+                renderTracerouteResults(data);
+            })
+                .catch(error => {
+                    console.error('Error running traceroute:', error);
+                    resultsContainer.innerHTML = `
+                        <div class="alert alert-danger alert-modern">
+                            <i class="bi bi-exclamation-triangle"></i>
+                            Error running traceroute. Please try again.
+                        </div>
+                    `;
+                })
+                .finally(() => {
+                    submitBtn.innerHTML = originalText;
+                    submitBtn.disabled = false;
+                });
+            });
+        }
+
+        function renderTracerouteResults(data) {
+            const container = document.getElementById('traceroute-results');
+            
+            if (data.success) {
+                let resultsHtml = '';
+                
+                // Handle direct connection
+                if (data.is_direct) {
+                    resultsHtml = `
+                        <div class="card card-modern">
+                            <div class="card-header card-header-modern">
+                                <h6 class="mb-0"><i class="bi bi-check-circle text-success"></i> Direct Connection</h6>
+                            </div>
+                            <div class="card-body">
+                                <div class="alert alert-success alert-modern">
+                                    <i class="bi bi-lightning-charge"></i>
+                                    <strong>Direct connection established!</strong>
+                                </div>
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <div class="traceroute-hop">
+                                            <strong>SNR Towards:</strong> ${data.snr_towards_direct} dB
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="traceroute-hop">
+                                            <strong>SNR Back:</strong> ${data.snr_back_direct} dB
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    // Handle multi-hop route
+                    let hopsTowardsHtml = '';
+                    let hopsBackHtml = '';
+                    
+                    if (data.hops_towards && data.hops_towards.length > 0) {
+                        data.hops_towards.forEach((hop) => {
+                            hopsTowardsHtml += `
+                                <div class="traceroute-hop">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <div>
+                                            <strong>Hop ${hop.hop}:</strong> ${hop.name} (${hop.id})
+                                        </div>
+                                        <div class="text-muted">
+                                            <i class="bi bi-arrow-right"></i> SNR: ${hop.snr} dB
+                                        </div>
+                                    </div>
+                                </div>
+                            `;
+                        });
+                    }
+                    
+                    if (data.hops_back && data.hops_back.length > 0) {
+                        data.hops_back.forEach((hop) => {
+                            hopsBackHtml += `
+                                <div class="traceroute-hop">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <div>
+                                            <strong>Hop ${hop.hop}:</strong> ${hop.name} (${hop.id})
+                                        </div>
+                                        <div class="text-muted">
+                                            <i class="bi bi-arrow-left"></i> SNR: ${hop.snr} dB
+                                        </div>
+                                    </div>
+                                </div>
+                            `;
+                        });
+                    }
+                    
+                    resultsHtml = `
+                        <div class="card card-modern">
+                            <div class="card-header card-header-modern">
+                                <h6 class="mb-0">
+                                    <i class="bi bi-check-circle text-success"></i> 
+                                    Traceroute Results (${data.total_hops} hops)
+                                </h6>
+                            </div>
+                            <div class="card-body">
+                                ${hopsTowardsHtml ? `
+                                    <h6><i class="bi bi-arrow-right text-primary"></i> Route to Destination</h6>
+                                    ${hopsTowardsHtml}
+                                ` : '<p class="text-muted">No hops towards destination recorded.</p>'}
+                                
+                                ${hopsBackHtml ? `
+                                    <h6 class="mt-4"><i class="bi bi-arrow-left text-secondary"></i> Route Back to Origin</h6>
+                                    ${hopsBackHtml}
+                                ` : '<p class="text-muted mt-3">No return route data available.</p>'}
+                            </div>
+                        </div>
+                    `;
+                }
+                
+                container.innerHTML = resultsHtml;
+            } else {
+                let errorMessage = data.error || 'No route found to destination.';
+                if (data.timeout) {
+                    errorMessage = 'Traceroute timed out. The destination may be unreachable or too far away.';
+                }
+                
+                container.innerHTML = `
+                    <div class="alert alert-warning alert-modern">
+                        <i class="bi bi-exclamation-triangle"></i>
+                        <strong>Traceroute Failed:</strong> ${errorMessage}
+                    </div>
+                `;
+            }
+        }
+
+        function fetchStats() {
+            fetch('/stats')
+                .then(response => response.json())
+                .then(data => {
+                    updateStatsDisplay(data);
+                    updateCharts(data);
+                })
+                .catch(error => {
+                    console.error('Error fetching stats:', error);
+                });
+        }
+
+        function updateStatsDisplay(stats) {
+            document.getElementById('total-packets').textContent = stats.totalPackets || 0;
+            document.getElementById('total-nodes').textContent = stats.totalNodes || 0;
+            document.getElementById('messages-today').textContent = stats.messagesToday || 0;
+        }
+
+        function initializeCharts() {
+            // Activity Chart
+            const activityCtx = document.getElementById('activity-chart').getContext('2d');
+            window.activityChart = new Chart(activityCtx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Packets per Hour',
+                        data: [],
+                        borderColor: '#2563eb',
+                        backgroundColor: 'rgba(37, 99, 235, 0.1)',
+                        tension: 0.4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true
+                        }
+                    }
+                }
+            });
+            
+            // Port Usage Chart
+            const portCtx = document.getElementById('port-chart').getContext('2d');
+            window.portChart = new Chart(portCtx, {
+                type: 'doughnut',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        data: [],
+                        backgroundColor: [
+                            '#2563eb',
+                            '#059669',
+                            '#d97706',
+                            '#dc2626',
+                            '#7c3aed'
+                        ]
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'bottom'
+                        }
+                    }
+                }
+            });
+
+            // Message Activity Chart
+            const messageCtx = document.getElementById('message-chart').getContext('2d');
+            window.messageChart = new Chart(messageCtx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Messages per Hour',
+                        data: [],
+                        borderColor: '#059669',
+                        backgroundColor: 'rgba(5, 150, 105, 0.1)',
+                        tension: 0.4,
+                        fill: true
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                stepSize: 1
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function updateCharts(stats) {
+            // Update charts with real data from API
+            if (stats.hourlyData) {
+                const hours = stats.hourlyData.hours;
+                const packets = stats.hourlyData.packets;
+                const messages = stats.hourlyData.messages;
+
+                // Update packet activity chart
+                window.activityChart.data.labels = hours;
+                window.activityChart.data.datasets[0].data = packets;
+                window.activityChart.update();
+
+                // Update message chart
+                window.messageChart.data.labels = hours;
+                window.messageChart.data.datasets[0].data = messages;
+                window.messageChart.update();
+            }
+
+            // Update port chart
+            if (stats.portUsage) {
+                window.portChart.data.labels = Object.keys(stats.portUsage);
+                window.portChart.data.datasets[0].data = Object.values(stats.portUsage);
+                window.portChart.update();
+            }
+        }
+
+        function updateLastUpdate() {
+            document.getElementById('last-update').textContent = 
+                'Last update: ' + new Date().toLocaleTimeString();
+        }
+
+        function updateUptime() {
+            // Fetch server-side uptime
+            fetch('/status')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.connection_uptime_seconds !== undefined) {
+                        const seconds = data.connection_uptime_seconds;
+                        const hours = Math.floor(seconds / 3600);
+                        const minutes = Math.floor((seconds % 3600) / 60);
+                        document.getElementById('uptime').textContent = `${hours}h ${minutes}m`;
+
+                        // Update connection start time display
+                        if (data.connection_start) {
+                            const startTime = new Date(data.connection_start);
+                            document.getElementById('session-start').textContent = startTime.toLocaleTimeString();
+                        }
+
+                        // Update connection status indicator
+                        const statusIndicator = document.querySelector('.status-indicator');
+                        const statusText = document.getElementById('connection-status');
+                        if (data.connected) {
+                            statusIndicator.classList.remove('status-offline');
+                            statusIndicator.classList.add('status-online');
+                            statusText.textContent = 'Connected';
+                        } else {
+                            statusIndicator.classList.remove('status-online');
+                            statusIndicator.classList.add('status-offline');
+                            statusText.textContent = 'Disconnected';
+                        }
+
+                        // Update local node ID if available
+                        if (data.local_node_id) {
+                            document.getElementById('local-node').textContent = data.local_node_id;
+                        }
+                    }
+                })
+                .catch(error => {
+                    console.error('Error fetching status:', error);
+                });
+        }
+
+        function saveSettings() {
+            const refreshInterval = document.getElementById('refresh-interval').value;
+            const theme = document.getElementById('theme-select').value;
+            const soundNotifications = document.getElementById('sound-notifications').checked;
+            const desktopNotifications = document.getElementById('desktop-notifications').checked;
+            
+            // Update app state
+            appState.refreshInterval = parseInt(refreshInterval);
+            
+            // Apply theme immediately
+            applyTheme(theme);
+            
+            // Request desktop notification permission if enabled
+            if (desktopNotifications && Notification.permission === 'default') {
+                Notification.requestPermission().then(permission => {
+                    if (permission === 'granted') {
+                        showAlert('Desktop notifications enabled!', 'success');
+                    } else {
+                        showAlert('Desktop notifications permission denied.', 'warning');
+                        document.getElementById('desktop-notifications').checked = false;
+                    }
+                });
+            }
+            
+            // Restart auto-refresh with new interval
+            if (appState.autoRefresh) {
+                clearInterval(appState.autoRefreshTimer);
+                startAutoRefresh();
+            }
+            
+            // Save to localStorage
+            localStorage.setItem('meshtastic-settings', JSON.stringify({
+                refreshInterval: refreshInterval,
+                theme: theme,
+                soundNotifications: soundNotifications,
+                desktopNotifications: desktopNotifications
+            }));
+            
+            showAlert('Settings saved successfully!', 'success');
+        }
+
+        function exportData(format) {
+            const button = document.getElementById(`export-${format}`);
+            const originalText = button.innerHTML;
+            button.innerHTML = '<span class="loading-spinner"></span> Exporting...';
+            button.disabled = true;
+            
+            fetch(`/export?format=${format}`)
+                .then(response => response.blob())
+                .then(blob => {
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `meshtastic-data.${format}`;
+                    document.body.appendChild(a);
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                    document.body.removeChild(a);
+                    showAlert(`Data exported as ${format.toUpperCase()}!`, 'success');
+                })
+                .catch(error => {
+                    console.error('Error exporting data:', error);
+                    showAlert('Error exporting data. Please try again.', 'danger');
+                })
+                .finally(() => {
+                    button.innerHTML = originalText;
+                    button.disabled = false;
+                });
+        }
+
+        function showAlert(message, type) {
+            const alertContainer = document.getElementById('send-status');
+            alertContainer.innerHTML = `
+                <div class="alert alert-${type} alert-modern alert-dismissible fade show" role="alert">
+                    <i class="bi bi-${type === 'success' ? 'check-circle' : type === 'warning' ? 'exclamation-triangle' : 'x-circle'}"></i>
+                    ${message}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                </div>
+            `;
+            
+            // Auto-dismiss after 5 seconds
+            setTimeout(() => {
+                const alert = alertContainer.querySelector('.alert');
+                if (alert) {
+                    const bsAlert = new bootstrap.Alert(alert);
+                    bsAlert.close();
+                }
+            }, 5000);
+        }
+
+        // Load saved settings on startup
+        function loadSettings() {
+            const saved = localStorage.getItem('meshtastic-settings');
+            if (saved) {
+                const settings = JSON.parse(saved);
+                document.getElementById('refresh-interval').value = settings.refreshInterval || 5000;
+                document.getElementById('theme-select').value = settings.theme || 'light';
+                document.getElementById('sound-notifications').checked = settings.soundNotifications !== false;
+                document.getElementById('desktop-notifications').checked = settings.desktopNotifications || false;
+                appState.refreshInterval = parseInt(settings.refreshInterval) || 5000;
+            }
+        }
+
+        function updateSystemInfo() {
+            // System info is now fetched via /status endpoint in updateUptime()
+            // This function is kept for compatibility but the work is done in updateUptime()
+        }
+
+        function applyTheme(theme) {
+            const body = document.body;
+            const root = document.documentElement;
+            
+            // Remove existing theme classes
+            body.classList.remove('theme-light', 'theme-dark');
+            
+            if (theme === 'dark') {
+                body.classList.add('theme-dark');
+                // Update CSS variables for dark theme with high contrast
+                root.style.setProperty('--primary-color', '#60a5fa');
+                root.style.setProperty('--secondary-color', '#e2e8f0');
+                root.style.setProperty('--success-color', '#34d399');
+                root.style.setProperty('--warning-color', '#fbbf24');
+                root.style.setProperty('--danger-color', '#f87171');
+                root.style.setProperty('--dark-color', '#f1f5f9');
+                root.style.setProperty('--light-color', '#0f172a');
+                root.style.setProperty('--border-color', '#475569');
+                
+                // Update body background for dark theme
+                body.style.background = 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)';
+                
+                // Update main container for dark theme
+                const mainContainer = document.querySelector('.main-container');
+                if (mainContainer) {
+                    mainContainer.style.background = 'rgba(15, 23, 42, 0.95)';
+                    mainContainer.style.color = '#f1f5f9';
+                }
+                
+                // Update all cards for dark theme
+                const cards = document.querySelectorAll('.card-modern');
+                cards.forEach(card => {
+                    card.style.background = '#1e293b';
+                    card.style.color = '#f1f5f9';
+                    card.style.borderColor = '#475569';
+                });
+                
+                // Update card headers for dark theme
+                const cardHeaders = document.querySelectorAll('.card-header-modern');
+                cardHeaders.forEach(header => {
+                    header.style.background = 'linear-gradient(135deg, #334155, #475569)';
+                    header.style.color = '#f1f5f9 !important';
+                    header.style.borderColor = '#475569';
+                });
+                
+                // Specifically update packet card header text for better readability
+                const packetHeaders = document.querySelectorAll('.card-header-modern h6');
+                packetHeaders.forEach(h6 => {
+                    h6.style.color = '#f1f5f9 !important';
+                });
+                
+                // Update all text content in card headers for dark mode
+                const allHeaderText = document.querySelectorAll('.card-header-modern *');
+                allHeaderText.forEach(element => {
+                    element.style.color = '#f1f5f9 !important';
+                });
+                
+                // Specifically target packet title elements
+                const packetTitles = document.querySelectorAll('.card-header-modern .d-flex h6, .card-header-modern h6, .card-header-modern .mb-0');
+                packetTitles.forEach(title => {
+                    title.style.color = '#f1f5f9 !important';
+                    title.style.setProperty('color', '#f1f5f9', 'important');
+                });
+                
+                // Update form controls for dark theme
+                const formControls = document.querySelectorAll('.form-control-modern, .form-select');
+                formControls.forEach(control => {
+                    control.style.background = '#334155';
+                    control.style.color = '#f1f5f9';
+                    control.style.borderColor = '#475569';
+                });
+                
+                // Update text elements for dark theme
+                const textMuted = document.querySelectorAll('.text-muted');
+                textMuted.forEach(text => {
+                    text.style.color = '#cbd5e1 !important';
+                });
+                
+                // Update navbar for dark theme
+                const navbar = document.querySelector('.navbar-custom');
+                if (navbar) {
+                    navbar.style.background = 'linear-gradient(135deg, #1e293b, #334155)';
+                }
+                
+                // Update tabs for dark theme
+                const navTabs = document.querySelectorAll('.nav-tabs-custom .nav-link');
+                navTabs.forEach(tab => {
+                    if (!tab.classList.contains('active')) {
+                        tab.style.color = '#e2e8f0';
+                    }
+                });
+                
+                // Update message bubbles for dark theme
+                const messageBubbles = document.querySelectorAll('.message-bubble');
+                messageBubbles.forEach(bubble => {
+                    bubble.style.background = '#334155';
+                    bubble.style.color = '#f1f5f9';
+                });
+                
+                // Update traceroute hops for dark theme
+                const tracerouteHops = document.querySelectorAll('.traceroute-hop');
+                tracerouteHops.forEach(hop => {
+                    hop.style.background = 'rgba(96, 165, 250, 0.2)';
+                    hop.style.color = '#f1f5f9';
+                    hop.style.borderColor = '#60a5fa';
+                });
+                
+            } else if (theme === 'auto') {
+                // Use system preference
+                const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                applyTheme(prefersDark ? 'dark' : 'light');
+                return;
+            } else {
+                // Light theme (default)
+                body.classList.add('theme-light');
+                // Reset to default CSS variables
+                root.style.setProperty('--primary-color', '#2563eb');
+                root.style.setProperty('--secondary-color', '#64748b');
+                root.style.setProperty('--success-color', '#059669');
+                root.style.setProperty('--warning-color', '#d97706');
+                root.style.setProperty('--danger-color', '#dc2626');
+                root.style.setProperty('--dark-color', '#1e293b');
+                root.style.setProperty('--light-color', '#f8fafc');
+                root.style.setProperty('--border-color', '#e2e8f0');
+                
+                // Reset body background
+                body.style.background = 'linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%)';
+                
+                // Reset main container
+                const mainContainer = document.querySelector('.main-container');
+                if (mainContainer) {
+                    mainContainer.style.background = 'rgba(255, 255, 255, 0.95)';
+                    mainContainer.style.color = '';
+                }
+                
+                // Reset all elements to default styles
+                const cards = document.querySelectorAll('.card-modern');
+                cards.forEach(card => {
+                    card.style.background = '';
+                    card.style.color = '';
+                    card.style.borderColor = '';
+                });
+                
+                const cardHeaders = document.querySelectorAll('.card-header-modern');
+                cardHeaders.forEach(header => {
+                    header.style.background = '';
+                    header.style.color = '';
+                    header.style.borderColor = '';
+                });
+                
+                const formControls = document.querySelectorAll('.form-control-modern, .form-select');
+                formControls.forEach(control => {
+                    control.style.background = '';
+                    control.style.color = '';
+                    control.style.borderColor = '';
+                });
+                
+                const textMuted = document.querySelectorAll('.text-muted');
+                textMuted.forEach(text => {
+                    text.style.color = '';
+                });
+                
+                const navbar = document.querySelector('.navbar-custom');
+                if (navbar) {
+                    navbar.style.background = '';
+                }
+                
+                const navTabs = document.querySelectorAll('.nav-tabs-custom .nav-link');
+                navTabs.forEach(tab => {
+                    tab.style.color = '';
+                });
+                
+                const messageBubbles = document.querySelectorAll('.message-bubble');
+                messageBubbles.forEach(bubble => {
+                    bubble.style.background = '';
+                    bubble.style.color = '';
+                });
+                
+                const tracerouteHops = document.querySelectorAll('.traceroute-hop');
+                tracerouteHops.forEach(hop => {
+                    hop.style.background = '';
+                    hop.style.color = '';
+                    hop.style.borderColor = '';
+                });
+            }
+        }
+
+        function playNotificationSound() {
+            const settings = JSON.parse(localStorage.getItem('meshtastic-settings') || '{}');
+            if (settings.soundNotifications !== false) {
+                // Create a simple notification sound using Web Audio API
+                try {
+                    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    const oscillator = audioContext.createOscillator();
+                    const gainNode = audioContext.createGain();
+                    
+                    oscillator.connect(gainNode);
+                    gainNode.connect(audioContext.destination);
+                    
+                    oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
+                    oscillator.frequency.setValueAtTime(600, audioContext.currentTime + 0.1);
+                    
+                    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                    
+                    oscillator.start(audioContext.currentTime);
+                    oscillator.stop(audioContext.currentTime + 0.3);
+                } catch (error) {
+                    console.log('Audio notification not supported');
+                }
+            }
+        }
+
+        function showDesktopNotification(title, message, icon = null) {
+            const settings = JSON.parse(localStorage.getItem('meshtastic-settings') || '{}');
+            if (settings.desktopNotifications && Notification.permission === 'granted') {
+                try {
+                    const notification = new Notification(title, {
+                        body: message,
+                        icon: icon || '/favicon.ico',
+                        badge: '/favicon.ico',
+                        tag: 'meshtastic-notification',
+                        requireInteraction: false,
+                        silent: false
+                    });
+                    
+                    // Auto-close after 5 seconds
+                    setTimeout(() => {
+                        notification.close();
+                    }, 5000);
+                    
+                    // Focus window when notification is clicked
+                    notification.onclick = function() {
+                        window.focus();
+                        notification.close();
+                    };
+                } catch (error) {
+                    console.log('Desktop notification failed:', error);
+                }
+            }
+        }
+
+        // Enhanced packet processing with notifications
+        function processNewPackets(newPackets, oldPackets) {
+            if (!oldPackets || oldPackets.length === 0) return;
+            
+            // Find truly new packets (not just re-ordered)
+            const oldTimestamps = new Set(oldPackets.map(p => p.timestamp));
+            const actuallyNewPackets = newPackets.filter(p => !oldTimestamps.has(p.timestamp));
+            
+            actuallyNewPackets.forEach(packet => {
+                // Play sound for new messages
+                if (packet.port_name === 'TEXT_MESSAGE_APP' && packet.message) {
+                    playNotificationSound();
+                    showDesktopNotification(
+                        `New message from ${packet.from_name}`,
+                        packet.message.substring(0, 100) + (packet.message.length > 100 ? '...' : ''),
+                        null
+                    );
+                }
+                
+                // Notify for other important packet types
+                else if (packet.port_name === 'NODEINFO_APP') {
+                    showDesktopNotification(
+                        'New Node Discovered',
+                        `${packet.from_name} joined the network`,
+                        null
+                    );
+                }
+            });
+        }
+
+        // Load settings and apply theme on startup
+        function loadSettings() {
+            const saved = localStorage.getItem('meshtastic-settings');
+            if (saved) {
+                const settings = JSON.parse(saved);
+                document.getElementById('refresh-interval').value = settings.refreshInterval || 5000;
+                document.getElementById('theme-select').value = settings.theme || 'light';
+                document.getElementById('sound-notifications').checked = settings.soundNotifications !== false;
+                document.getElementById('desktop-notifications').checked = settings.desktopNotifications || false;
+                appState.refreshInterval = parseInt(settings.refreshInterval) || 5000;
+                
+                // Apply saved theme
+                applyTheme(settings.theme || 'light');
+            }
+        }
+
+        // Listen for system theme changes when auto theme is selected
+        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+            const settings = JSON.parse(localStorage.getItem('meshtastic-settings') || '{}');
+            if (settings.theme === 'auto') {
+                applyTheme('auto');
+            }
+        });
+
+        // Authentication functions
+        let authState = {
+            required: false,
+            authenticated: false,
+            pendingAction: null
+        };
+
+        function checkAuthStatus() {
+            return fetch('/auth/status')
+                .then(response => response.json())
+                .then(data => {
+                    authState.required = data.auth_required;
+                    authState.authenticated = data.authenticated;
+                    updateAuthUI();
+                    return authState;
+                })
+                .catch(error => {
+                    console.error('Error checking auth status:', error);
+                    return authState;
+                });
+        }
+
+        function updateAuthUI() {
+            const sendBanner = document.getElementById('send-auth-banner');
+            const tracerouteBanner = document.getElementById('traceroute-auth-banner');
+
+            if (authState.required && !authState.authenticated) {
+                // Show auth required banners
+                if (sendBanner) sendBanner.style.display = 'block';
+                if (tracerouteBanner) tracerouteBanner.style.display = 'block';
+            } else {
+                // Hide banners when authenticated or no auth required
+                if (sendBanner) sendBanner.style.display = 'none';
+                if (tracerouteBanner) tracerouteBanner.style.display = 'none';
+            }
+        }
+
+        function requireAuth(action) {
+            if (!authState.required || authState.authenticated) {
+                return action();
+            }
+            
+            authState.pendingAction = action;
+            const modal = new bootstrap.Modal(document.getElementById('authModal'));
+            modal.show();
+            
+            // Focus password field
+            setTimeout(() => {
+                document.getElementById('auth-password').focus();
+            }, 500);
+        }
+
+        function authenticate() {
+            const password = document.getElementById('auth-password').value;
+            const errorDiv = document.getElementById('auth-error');
+            const button = event.target;
+            
+            if (!password) {
+                showAuthError('Please enter a password');
+                return;
+            }
+            
+            button.innerHTML = '<span class="loading-spinner"></span> Authenticating...';
+            button.disabled = true;
+            
+            fetch('/auth/login', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ password: password })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    authState.authenticated = true;
+                    updateAuthUI();
+                    
+                    const modal = bootstrap.Modal.getInstance(document.getElementById('authModal'));
+                    modal.hide();
+                    
+                    // Clear form
+                    document.getElementById('auth-password').value = '';
+                    errorDiv.style.display = 'none';
+                    
+                    // Execute pending action
+                    if (authState.pendingAction) {
+                        authState.pendingAction();
+                        authState.pendingAction = null;
+                    }
+                } else {
+                    showAuthError(data.error || 'Authentication failed');
+                }
+            })
+            .catch(error => {
+                console.error('Authentication error:', error);
+                showAuthError('Authentication failed. Please try again.');
+            })
+            .finally(() => {
+                button.innerHTML = '<i class="bi bi-key"></i> Authenticate';
+                button.disabled = false;
+            });
+        }
+
+        function logout() {
+            fetch('/auth/logout', {
+                method: 'POST'
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    authState.authenticated = false;
+                    updateAuthUI();
+                    showAlert('Logged out successfully', 'success');
+                }
+            })
+            .catch(error => {
+                console.error('Logout error:', error);
+            });
+        }
+
+        function cancelAuth() {
+            const modal = bootstrap.Modal.getInstance(document.getElementById('authModal'));
+            modal.hide();
+            
+            // Clear form
+            document.getElementById('auth-password').value = '';
+            document.getElementById('auth-error').style.display = 'none';
+            authState.pendingAction = null;
+        }
+
+        function showAuthError(message) {
+            const errorDiv = document.getElementById('auth-error');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+        }
+
+        // Handle Enter key in auth form
+        document.addEventListener('DOMContentLoaded', function() {
+            document.getElementById('auth-password').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    authenticate();
+                }
+            });
+        });
+
+        // Load settings when page loads
+        document.addEventListener('DOMContentLoaded', loadSettings);
+    </script>
+
+    <!-- Authentication Modal -->
+    <div class="modal fade" id="authModal" tabindex="-1" aria-labelledby="authModalLabel" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="authModalLabel">
+                        <i class="bi bi-shield-lock"></i> Authentication Required
+                    </h5>
+                </div>
+                <div class="modal-body">
+                    <p class="text-muted">This feature requires authentication. Please enter the password to continue.</p>
+                    <form id="auth-form">
+                        <div class="mb-3">
+                            <label for="auth-password" class="form-label">Password</label>
+                            <input type="password" class="form-control form-control-modern" id="auth-password" required>
+                        </div>
+                        <div id="auth-error" class="alert alert-danger" style="display: none;"></div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary btn-modern" onclick="cancelAuth()">Cancel</button>
+                    <button type="button" class="btn btn-primary-modern btn-modern" onclick="authenticate()">
+                        <i class="bi bi-key"></i> Authenticate
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="text-center py-3" style="background: #ffffff; color: #475569; font-size: 0.875rem; font-weight: 500; border-radius: 10px; margin: 10px 20px 20px 20px;">
+        MeshConsole by <a href="https://m9wav.uk/" target="_blank" rel="noopener" style="color: #2563eb; text-decoration: none;">M9WAV</a> <a href="https://github.com/m9wav/MeshConsole" target="_blank" rel="noopener" style="color: #475569; margin-left: 8px;"><i class="bi bi-github"></i></a>
+    </footer>
+</body>
+</html>
