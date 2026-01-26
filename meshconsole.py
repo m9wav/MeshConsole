@@ -1232,18 +1232,36 @@ class MeshtasticTool:
             offset = int(request.args.get('offset', 0))
             port_filter = request.args.get('port_filter', '')
             node_filter = request.args.get('node_filter', '')
+            unique_locations = request.args.get('unique_locations', '') == '1'
 
-            # If filtering by node or port, query database for more complete results
-            if node_filter or port_filter:
+            # If filtering by node or port or unique locations, query database for more complete results
+            if node_filter or port_filter or unique_locations:
+                # For unique locations, force POSITION_APP filter
+                effective_port_filter = 'POSITION_APP' if unique_locations else (port_filter or None)
                 packets = self.db_handler.fetch_packets_filtered(
                     node_filter=node_filter or None,
-                    port_filter=port_filter or None,
+                    port_filter=effective_port_filter,
                     limit=self.max_packets_memory
                 )
                 # Resolve node names using current node database
                 for packet in packets:
                     packet['from_name'] = self._resolve_node_name(packet.get('from_id', ''))
                     packet['to_name'] = self._resolve_node_name(packet.get('to_id', ''))
+
+                # If unique_locations, deduplicate by coordinates (keep most recent per location)
+                if unique_locations:
+                    seen_locations = {}
+                    for packet in packets:
+                        lat = packet.get('latitude')
+                        lon = packet.get('longitude')
+                        alt = packet.get('altitude', 0)
+                        if lat is not None and lon is not None:
+                            # Round to 5 decimal places (~1m precision) to group nearby positions
+                            location_key = (round(lat, 5), round(lon, 5), alt)
+                            if location_key not in seen_locations:
+                                seen_locations[location_key] = packet
+                    packets = list(seen_locations.values())
+
                 total_packets = len(packets)
                 # Already sorted by timestamp DESC from database
                 paginated_packets = packets[offset:offset + limit]
@@ -1260,7 +1278,7 @@ class MeshtasticTool:
                 response_data = {
                     'packets': paginated_packets,
                     'total': total_packets,
-                    'filtered': bool(port_filter or node_filter)
+                    'filtered': bool(port_filter or node_filter or unique_locations)
                 }
                 packets_json = json.dumps(response_data, default=self._json_serializer)
             except TypeError as e:

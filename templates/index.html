@@ -511,6 +511,9 @@
                                 <option value="ROUTING_APP">Routing</option>
                                 <option value="NEIGHBORINFO_APP">Neighbor Info</option>
                             </select>
+                            <button class="btn btn-outline-primary btn-modern" id="unique-locations-toggle" title="Show only unique locations (latest position per node)">
+                                <i class="bi bi-geo-alt"></i> Unique Locations
+                            </button>
                             <button class="btn btn-primary-modern btn-modern" id="refresh-packets">
                                 <i class="bi bi-arrow-clockwise"></i> Refresh
                             </button>
@@ -877,6 +880,7 @@
             nodes: {},
             portFilter: '',
             nodeFilter: null, // {id: '!abc123', name: 'NodeName'}
+            uniqueLocations: false
             stats: {
                 totalPackets: 0,
                 totalNodes: 0,
@@ -941,6 +945,31 @@
                     } catch (e) {}
                 });
                 appState.initializedMaps = {};
+                fetchPackets();
+            });
+
+            // Unique locations toggle
+            document.getElementById('unique-locations-toggle').addEventListener('click', function() {
+                appState.uniqueLocations = !appState.uniqueLocations;
+                appState.offset = 0;
+                appState.lastDataHash = null;
+                appState.displayedPackets = {};
+                // Clear maps
+                Object.keys(appState.initializedMaps).forEach(mapId => {
+                    try { appState.initializedMaps[mapId].remove(); } catch (e) {}
+                });
+                appState.initializedMaps = {};
+                // Update button appearance
+                if (appState.uniqueLocations) {
+                    this.classList.remove('btn-outline-primary');
+                    this.classList.add('btn-primary-modern');
+                    // Auto-set port filter to Position when unique locations is enabled
+                    document.getElementById('port-filter').value = 'POSITION_APP';
+                    appState.portFilter = 'POSITION_APP';
+                } else {
+                    this.classList.remove('btn-primary-modern');
+                    this.classList.add('btn-outline-primary');
+                }
                 fetchPackets();
             });
 
@@ -1012,7 +1041,8 @@
         function fetchPackets() {
             const filterParam = appState.portFilter ? `&port_filter=${appState.portFilter}` : '';
             const nodeFilterParam = appState.nodeFilter ? `&node_filter=${encodeURIComponent(appState.nodeFilter.id)}` : '';
-            fetch(`/packets?limit=${appState.limit}&offset=${appState.offset}${filterParam}${nodeFilterParam}`)
+            const uniqueLocationsParam = appState.uniqueLocations ? '&unique_locations=1' : '';
+            fetch(`/packets?limit=${appState.limit}&offset=${appState.offset}${filterParam}${nodeFilterParam}${uniqueLocationsParam}`)
                 .then(response => response.json())
                 .then(response => {
                     const packets = response.packets || response;
