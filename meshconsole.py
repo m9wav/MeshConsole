@@ -1240,6 +1240,10 @@ class MeshtasticTool:
                     port_filter=port_filter or None,
                     limit=self.max_packets_memory
                 )
+                # Resolve node names using current node database
+                for packet in packets:
+                    packet['from_name'] = self._get_node_name(packet.get('from_id', ''))
+                    packet['to_name'] = self._get_node_name(packet.get('to_id', ''))
                 total_packets = len(packets)
                 # Already sorted by timestamp DESC from database
                 paginated_packets = packets[offset:offset + limit]
