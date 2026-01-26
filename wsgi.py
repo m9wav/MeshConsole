@@ -193,32 +193,32 @@ def get_packets():
     if node_filter or port_filter or unique_locations:
         # For unique locations, force POSITION_APP filter and fetch more for deduplication
         effective_port_filter = 'POSITION_APP' if unique_locations else (port_filter or None)
-        # For unique locations, fetch more to find unique positions; otherwise just fetch what we need
-        db_limit = max_packets if unique_locations else (offset + limit)
+        # For unique locations, fetch enough to find unique positions (200 is a good balance)
+        # For regular filtering, just fetch what we need for the current page
+        db_limit = 200 if unique_locations else (offset + limit)
         packets = tool.db_handler.fetch_packets_filtered(
             node_filter=node_filter or None,
             port_filter=effective_port_filter,
             limit=db_limit
         )
-        # Resolve node names using current node database
-        for packet in packets:
-            packet['from_name'] = tool._resolve_node_name(packet.get('from_id', ''))
-            packet['to_name'] = tool._resolve_node_name(packet.get('to_id', ''))
 
-        # If unique_locations, deduplicate by coordinates (keep most recent per location)
+        # If unique_locations, deduplicate by coordinates FIRST (before expensive name resolution)
         if unique_locations:
             seen_locations = {}
             for packet in packets:
                 lat = packet.get('latitude')
                 lon = packet.get('longitude')
-                alt = packet.get('altitude', 0)
                 if lat is not None and lon is not None:
                     # Round to 5 decimal places (~1m precision) to group nearby positions
-                    # Exclude altitude - same lat/lon at different altitudes treated as same location
                     location_key = (round(lat, 5), round(lon, 5))
                     if location_key not in seen_locations:
                         seen_locations[location_key] = packet
             packets = list(seen_locations.values())
+
+        # Resolve node names using current node database (now only for deduplicated results)
+        for packet in packets:
+            packet['from_name'] = tool._resolve_node_name(packet.get('from_id', ''))
+            packet['to_name'] = tool._resolve_node_name(packet.get('to_id', ''))
 
         total_count = len(packets)
         # Already sorted by timestamp DESC from database
