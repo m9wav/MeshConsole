@@ -1005,6 +1005,10 @@
                     // Auto-set port filter to Position when unique locations is enabled
                     document.getElementById('port-filter').value = 'POSITION_APP';
                     appState.portFilter = 'POSITION_APP';
+                    // Turn off auto-refresh for unique locations (it's a snapshot view)
+                    if (appState.autoRefresh) {
+                        toggleAutoRefresh();
+                    }
                 } else {
                     this.classList.remove('btn-primary-modern');
                     this.classList.add('btn-outline-primary');
@@ -1355,44 +1359,44 @@
         }
 
         function fetchNodes() {
-            // Since we don't have a dedicated nodes endpoint, we'll extract from packets
-            fetch('/packets?limit=1000&offset=0')
-                .then(response => response.json())
-                .then(response => {
-                    const data = response.packets || response;
-                    const nodes = {};
-                    data.forEach(packet => {
-                        // Only update if node doesn't exist or this timestamp is more recent
-                        if (packet.from_id && packet.from_name) {
-                            if (!nodes[packet.from_id] || new Date(packet.timestamp) > new Date(nodes[packet.from_id].lastSeen)) {
-                                // Try to get shortName from NODEINFO packets
-                                let shortName = nodes[packet.from_id]?.shortName || '';
-                                if (packet.port_name === 'NODEINFO_APP' && packet.raw_packet?.decoded?.user?.shortName) {
-                                    shortName = packet.raw_packet.decoded.user.shortName;
-                                }
-                                nodes[packet.from_id] = {
-                                    id: packet.from_id,
-                                    name: resolveNodeName(packet, 'from'),
-                                    shortName: shortName,
-                                    lastSeen: packet.timestamp
-                                };
+            // Fetch node info from dedicated endpoint, then update with recent packet activity
+            Promise.all([
+                fetch('/nodes').then(r => r.json()),
+                fetch('/packets?limit=500&offset=0').then(r => r.json())
+            ]).then(([nodesResponse, packetsResponse]) => {
+                const nodes = {};
+
+                // First, populate from /nodes endpoint (has all NODEINFO data including shortNames)
+                (nodesResponse.nodes || []).forEach(node => {
+                    nodes[node.id] = {
+                        id: node.id,
+                        name: node.longName || node.id,
+                        shortName: node.shortName || '',
+                        hwModel: node.hwModel || '',
+                        lastSeen: node.lastSeen
+                    };
+                });
+
+                // Then update lastSeen from recent packets (more accurate activity times)
+                const packets = packetsResponse.packets || packetsResponse;
+                packets.forEach(packet => {
+                    if (packet.from_id) {
+                        if (nodes[packet.from_id]) {
+                            // Update lastSeen if packet is more recent
+                            if (new Date(packet.timestamp) > new Date(nodes[packet.from_id].lastSeen)) {
+                                nodes[packet.from_id].lastSeen = packet.timestamp;
                             }
-                            // Update shortName from NODEINFO even if not most recent
-                            if (packet.port_name === 'NODEINFO_APP' && packet.raw_packet?.decoded?.user?.shortName) {
-                                nodes[packet.from_id].shortName = packet.raw_packet.decoded.user.shortName;
-                            }
+                        } else {
+                            // Node not in NODEINFO, add from packet
+                            nodes[packet.from_id] = {
+                                id: packet.from_id,
+                                name: packet.from_name || packet.from_id,
+                                shortName: '',
+                                lastSeen: packet.timestamp
+                            };
                         }
-                        if (packet.to_id && packet.to_name && packet.to_id !== '^all') {
-                            if (!nodes[packet.to_id] || new Date(packet.timestamp) > new Date(nodes[packet.to_id].lastSeen)) {
-                                nodes[packet.to_id] = {
-                                    id: packet.to_id,
-                                    name: packet.to_name,
-                                    shortName: nodes[packet.to_id]?.shortName || '',
-                                    lastSeen: packet.timestamp
-                                };
-                            }
-                        }
-                    });
+                    }
+                });
 
                     appState.nodes = nodes;
                     // Sort by lastSeen descending (most recent first)
