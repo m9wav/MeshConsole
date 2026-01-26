@@ -1286,9 +1286,9 @@ class MeshtasticTool:
             if node_filter or port_filter or unique_locations:
                 # For unique locations, force POSITION_APP filter and fetch more for deduplication
                 effective_port_filter = 'POSITION_APP' if unique_locations else (port_filter or None)
-                # For unique locations, fetch enough to find unique positions (200 is a good balance)
+                # For unique locations, fetch from config limit to find unique positions
                 # For regular filtering, just fetch what we need for the current page
-                db_limit = 200 if unique_locations else (offset + limit)
+                db_limit = self.max_packets_memory if unique_locations else (offset + limit)
                 packets = self.db_handler.fetch_packets_filtered(
                     node_filter=node_filter or None,
                     port_filter=effective_port_filter,
