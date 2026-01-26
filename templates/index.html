@@ -1406,10 +1406,9 @@
                 appState.sortedNodes = sortedNodes;
                 renderNodes(sortedNodes);
                 populateNodeSelects(sortedNodes);
-            })
-                .catch(error => {
-                    console.error('Error fetching nodes:', error);
-                });
+            }).catch(error => {
+                console.error('Error fetching nodes:', error);
+            });
         }
 
         function filterNodes(searchTerm) {
