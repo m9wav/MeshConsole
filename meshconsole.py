@@ -281,6 +281,34 @@ class DatabaseHandler:
 
             return packets
 
+    def lookup_node_name(self, node_id):
+        """Look up a node's long name from NODEINFO packets in the database.
+
+        Args:
+            node_id: The node ID to look up (e.g., '!da567ab8')
+
+        Returns:
+            The node's long name if found, otherwise the original node_id.
+        """
+        with self.lock:
+            # Find most recent NODEINFO packet from this node
+            self.cursor.execute(
+                '''SELECT raw_packet FROM packets
+                   WHERE from_id = ? AND port_name = 'NODEINFO_APP'
+                   ORDER BY timestamp DESC LIMIT 1''',
+                (node_id,)
+            )
+            row = self.cursor.fetchone()
+            if row and row[0]:
+                try:
+                    raw_packet = json.loads(row[0])
+                    long_name = raw_packet.get('decoded', {}).get('user', {}).get('longName')
+                    if long_name:
+                        return long_name
+                except Exception:
+                    pass
+            return node_id
+
     def fetch_packet_stats(self):
         """Fetch packet statistics from the database."""
         with self.lock:
@@ -456,7 +484,21 @@ class MeshtasticTool:
 
     def _resolve_node_name(self, node_id):
         """Resolve node ID to a friendly name if possible."""
-        return self.node_name_map.get(node_id, node_id)
+        # First check in-memory map
+        if node_id in self.node_name_map:
+            return self.node_name_map[node_id]
+
+        # Fallback: check database for NODEINFO packets from this node
+        try:
+            name = self.db_handler.lookup_node_name(node_id)
+            if name and name != node_id:
+                # Cache it for future lookups
+                self.node_name_map[node_id] = name
+                return name
+        except Exception as e:
+            logger.debug(f"Error looking up node name from DB: {e}")
+
+        return node_id
 
     def _get_port_name(self, portnum):
         """Get the port name from the port number."""
