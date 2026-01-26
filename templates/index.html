@@ -1011,13 +1011,37 @@
             });
         }
 
+        function resolveNodeName(packet, field) {
+            // Get the name and id for the field (from or to)
+            const name = field === 'from' ? packet.from_name : packet.to_name;
+            const id = field === 'from' ? packet.from_id : packet.to_id;
+
+            // If name is resolved (not equal to id), use it
+            if (name && name !== id) {
+                return name;
+            }
+
+            // Fallback: for NODEINFO packets, try to get name from raw_packet
+            if (packet.port_name === 'NODEINFO_APP' && field === 'from') {
+                const longName = packet.raw_packet?.decoded?.user?.longName;
+                if (longName) {
+                    return longName;
+                }
+            }
+
+            // Return the original name (or id if name was empty)
+            return name || id;
+        }
+
         function createPacketCard(packet, index) {
             const card = document.createElement('div');
             card.className = 'card card-modern fade-in';
-            
+
             const timestamp = new Date(packet.timestamp).toLocaleString();
             const portIcon = getPortIcon(packet.port_name);
-            
+            const fromName = resolveNodeName(packet, 'from');
+            const toName = resolveNodeName(packet, 'to');
+
             card.innerHTML = `
                 <div class="card-header card-header-modern">
                     <div class="d-flex justify-content-between align-items-center">
@@ -1025,9 +1049,9 @@
                             ${portIcon} ${packet.port_name} - ${timestamp}
                         </h6>
                         <div>
-                            <span class="node-badge">${packet.from_name}</span>
+                            <span class="node-badge">${fromName}</span>
                             <i class="bi bi-arrow-right mx-2"></i>
-                            <span class="node-badge">${packet.to_name}</span>
+                            <span class="node-badge">${toName}</span>
                         </div>
                     </div>
                 </div>
