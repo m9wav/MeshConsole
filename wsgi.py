@@ -195,6 +195,10 @@ def get_packets():
             port_filter=port_filter or None,
             limit=max_packets
         )
+        # Resolve node names using current node database
+        for packet in packets:
+            packet['from_name'] = tool._get_node_name(packet.get('from_id', ''))
+            packet['to_name'] = tool._get_node_name(packet.get('to_id', ''))
         total_count = len(packets)
         # Already sorted by timestamp DESC from database
         paginated = packets[offset:offset + limit]
