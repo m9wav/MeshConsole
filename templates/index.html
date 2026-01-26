@@ -1390,7 +1390,7 @@
                             // Node not in NODEINFO, add from packet
                             nodes[packet.from_id] = {
                                 id: packet.from_id,
-                                name: packet.from_name || packet.from_id,
+                                name: packet.from_name || packet.from_id || 'Unknown',
                                 shortName: '',
                                 lastSeen: packet.timestamp
                             };
@@ -1415,8 +1415,8 @@
             if (!appState.sortedNodes) return;
             const term = searchTerm.toLowerCase();
             const filtered = appState.sortedNodes.filter(node =>
-                node.name.toLowerCase().includes(term) ||
-                node.id.toLowerCase().includes(term) ||
+                (node.name && node.name.toLowerCase().includes(term)) ||
+                (node.id && node.id.toLowerCase().includes(term)) ||
                 (node.shortName && node.shortName.toLowerCase().includes(term))
             );
             renderNodes(filtered);
