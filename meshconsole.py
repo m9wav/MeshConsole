@@ -1299,7 +1299,8 @@ class MeshtasticTool:
                         alt = packet.get('altitude', 0)
                         if lat is not None and lon is not None:
                             # Round to 5 decimal places (~1m precision) to group nearby positions
-                            location_key = (round(lat, 5), round(lon, 5), alt)
+                            # Exclude altitude - same lat/lon at different altitudes treated as same location
+                            location_key = (round(lat, 5), round(lon, 5))
                             if location_key not in seen_locations:
                                 seen_locations[location_key] = packet
                     packets = list(seen_locations.values())
