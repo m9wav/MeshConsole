@@ -1337,6 +1337,42 @@ class MeshtasticTool:
                 return jsonify({'error': 'Failed to serialize packets'}), 500
             return Response(packets_json, mimetype='application/json')
 
+        @app.route('/nodes')
+        def get_nodes():
+            """Get all known nodes with their info from NODEINFO packets."""
+            try:
+                # Query all NODEINFO packets, get latest per node
+                with self.db_handler.lock:
+                    self.db_handler.cursor.execute('''
+                        SELECT from_id, raw_packet, MAX(timestamp) as latest
+                        FROM packets
+                        WHERE port_name = 'NODEINFO_APP'
+                        GROUP BY from_id
+                        ORDER BY latest DESC
+                    ''')
+                    rows = self.db_handler.cursor.fetchall()
+
+                nodes = []
+                for row in rows:
+                    try:
+                        node_id = row[0]
+                        raw_packet = json.loads(row[1]) if row[1] else {}
+                        user = raw_packet.get('decoded', {}).get('user', {})
+                        nodes.append({
+                            'id': node_id,
+                            'longName': user.get('longName', node_id),
+                            'shortName': user.get('shortName', ''),
+                            'hwModel': user.get('hwModel', ''),
+                            'lastSeen': row[2]
+                        })
+                    except Exception:
+                        continue
+
+                return jsonify({'nodes': nodes})
+            except Exception as e:
+                logger.error(f"Error fetching nodes: {e}")
+                return jsonify({'error': str(e)}), 500
+
         @app.route('/send-message', methods=['POST'])
         @require_auth
         def send_message_api():
