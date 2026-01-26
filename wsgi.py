@@ -182,23 +182,30 @@ def auth_status():
 @app.route('/packets')
 def get_packets():
     tool = get_tool()
-    limit = int(request.args.get('limit', 1000))
+    max_packets = config.getint('Database', 'max_packets_memory', fallback=1000)
+    limit = int(request.args.get('limit', max_packets))
     offset = int(request.args.get('offset', 0))
     port_filter = request.args.get('port_filter', '')
     node_filter = request.args.get('node_filter', '')
 
-    with tool.latest_packets_lock:
-        packets = list(tool.latest_packets)
+    # If filtering by node or port, query database for more complete results
+    if node_filter or port_filter:
+        packets = tool.db_handler.fetch_packets_filtered(
+            node_filter=node_filter or None,
+            port_filter=port_filter or None,
+            limit=max_packets
+        )
+        total_count = len(packets)
+        # Already sorted by timestamp DESC from database
+        paginated = packets[offset:offset + limit]
+    else:
+        # No filters - use in-memory cache for speed
+        with tool.latest_packets_lock:
+            packets = list(tool.latest_packets)
 
-    # Apply server-side filters if specified
-    if port_filter:
-        packets = [p for p in packets if p.get('port_name') == port_filter]
-    if node_filter:
-        packets = [p for p in packets if p.get('from_id') == node_filter or p.get('to_id') == node_filter]
-
-    total_count = len(packets)
-    packets = packets[::-1]  # Newest first
-    paginated = packets[offset:offset + limit]
+        total_count = len(packets)
+        packets = packets[::-1]  # Newest first
+        paginated = packets[offset:offset + limit]
 
     return Response(json.dumps({
         'packets': paginated,

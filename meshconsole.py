@@ -207,6 +207,80 @@ class DatabaseHandler:
                 self.cursor.execute('SELECT * FROM packets ORDER BY timestamp DESC')
             return self.cursor.fetchall()
 
+    def fetch_packets_filtered(self, node_filter=None, port_filter=None, limit=1000):
+        """Fetch packets from the database with optional node and port filters.
+
+        Args:
+            node_filter: If specified, only return packets where from_id or to_id matches.
+            port_filter: If specified, only return packets with matching port_name.
+            limit: Maximum number of packets to return.
+
+        Returns:
+            List of packet dictionaries.
+        """
+        with self.lock:
+            conditions = []
+            params = []
+
+            if node_filter:
+                conditions.append('(from_id = ? OR to_id = ?)')
+                params.extend([node_filter, node_filter])
+
+            if port_filter:
+                conditions.append('port_name = ?')
+                params.append(port_filter)
+
+            where_clause = ' AND '.join(conditions) if conditions else '1=1'
+            params.append(limit)
+
+            self.cursor.execute(
+                f'SELECT * FROM packets WHERE {where_clause} ORDER BY timestamp DESC LIMIT ?',
+                params
+            )
+            rows = self.cursor.fetchall()
+
+            # Convert to packet dictionaries
+            packets = []
+            for row in rows:
+                try:
+                    raw_packet = json.loads(row[5]) if row[5] else {}
+                    packet = {
+                        'timestamp': row[0],
+                        'from_id': row[1],
+                        'to_id': row[2],
+                        'port_name': row[3],
+                        'payload': row[4],
+                        'raw_packet': raw_packet,
+                        'from_name': raw_packet.get('fromId', row[1]),
+                        'to_name': raw_packet.get('toId', row[2]),
+                        'rssi': raw_packet.get('rxRssi', 'N/A'),
+                        'snr': raw_packet.get('rxSnr', 'N/A'),
+                        'hop_limit': raw_packet.get('hopLimit', 'N/A'),
+                    }
+                    # Extract additional fields based on port type
+                    decoded = raw_packet.get('decoded', {})
+                    if row[3] == 'TEXT_MESSAGE_APP':
+                        packet['message'] = decoded.get('text', '')
+                    elif row[3] == 'POSITION_APP':
+                        pos = decoded.get('position', {})
+                        packet['latitude'] = pos.get('latitude', pos.get('latitudeI', 0) / 1e7 if 'latitudeI' in pos else None)
+                        packet['longitude'] = pos.get('longitude', pos.get('longitudeI', 0) / 1e7 if 'longitudeI' in pos else None)
+                        packet['altitude'] = pos.get('altitude', 0)
+                    elif row[3] == 'TELEMETRY_APP':
+                        metrics = decoded.get('telemetry', {}).get('deviceMetrics', {})
+                        packet['battery_level'] = metrics.get('batteryLevel')
+                        packet['voltage'] = metrics.get('voltage')
+                        packet['channel_util'] = metrics.get('channelUtilization')
+                        uptime = metrics.get('uptimeSeconds', 0)
+                        packet['uptime_hours'] = uptime // 3600
+                        packet['uptime_minutes'] = (uptime % 3600) // 60
+                    packets.append(packet)
+                except Exception as e:
+                    logger.error(f"Error processing packet row: {e}")
+                    continue
+
+            return packets
+
     def fetch_packet_stats(self):
         """Fetch packet statistics from the database."""
         with self.lock:
@@ -1159,19 +1233,24 @@ class MeshtasticTool:
             port_filter = request.args.get('port_filter', '')
             node_filter = request.args.get('node_filter', '')
 
-            with self.latest_packets_lock:
-                packets = list(self.latest_packets)
+            # If filtering by node or port, query database for more complete results
+            if node_filter or port_filter:
+                packets = self.db_handler.fetch_packets_filtered(
+                    node_filter=node_filter or None,
+                    port_filter=port_filter or None,
+                    limit=self.max_packets_memory
+                )
+                total_packets = len(packets)
+                # Already sorted by timestamp DESC from database
+                paginated_packets = packets[offset:offset + limit]
+            else:
+                # No filters - use in-memory cache for speed
+                with self.latest_packets_lock:
+                    packets = list(self.latest_packets)
 
-            # Apply server-side filters if specified
-            if port_filter:
-                packets = [p for p in packets if p.get('port_name') == port_filter]
-            if node_filter:
-                packets = [p for p in packets if p.get('from_id') == node_filter or p.get('to_id') == node_filter]
-
-            # Apply pagination
-            total_packets = len(packets)
-            packets = packets[::-1]  # Reverse for newest first
-            paginated_packets = packets[offset:offset + limit]
+                total_packets = len(packets)
+                packets = packets[::-1]  # Reverse for newest first
+                paginated_packets = packets[offset:offset + limit]
 
             try:
                 response_data = {
