@@ -226,6 +226,46 @@
             font-weight: 500;
         }
 
+        .node-badge-clickable {
+            cursor: pointer;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .node-badge-clickable:hover {
+            transform: scale(1.05);
+            box-shadow: 0 2px 8px rgba(37, 99, 235, 0.4);
+        }
+
+        .node-name-clickable {
+            cursor: pointer;
+            transition: color 0.2s ease;
+        }
+
+        .node-name-clickable:hover {
+            color: var(--primary-color) !important;
+            text-decoration: underline;
+        }
+
+        .filter-indicator {
+            background: linear-gradient(135deg, var(--warning-color), #f59e0b);
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: 10px;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.875rem;
+        }
+
+        .filter-indicator .btn-close {
+            filter: brightness(0) invert(1);
+            opacity: 0.8;
+        }
+
+        .filter-indicator .btn-close:hover {
+            opacity: 1;
+        }
+
         .message-bubble {
             background: var(--light-color);
             border-radius: 15px;
@@ -460,6 +500,7 @@
                             <p class="text-muted">Real-time monitoring of mesh network activity</p>
                         </div>
                         <div class="col-md-6 text-end d-flex align-items-center justify-content-end gap-2 flex-wrap">
+                            <div id="node-filter-indicator" style="display: none;"></div>
                             <select class="form-select form-control-modern" id="port-filter" style="width: auto; min-width: 160px;">
                                 <option value="">All Types</option>
                                 <option value="TEXT_MESSAGE_APP">Messages</option>
@@ -614,17 +655,23 @@
                 <!-- Network Nodes Tab -->
                 <div class="tab-pane fade" id="nodes" role="tabpanel">
                     <div class="row mb-3">
-                        <div class="col-md-6">
+                        <div class="col-md-4">
                             <h4><i class="bi bi-people text-primary"></i> Network Nodes</h4>
                             <p class="text-muted">Discovered nodes in your mesh network</p>
                         </div>
-                        <div class="col-md-6 text-end">
+                        <div class="col-md-4">
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="bi bi-search"></i></span>
+                                <input type="text" class="form-control" id="node-search" placeholder="Search nodes...">
+                            </div>
+                        </div>
+                        <div class="col-md-4 text-end">
                             <button class="btn btn-primary-modern btn-modern" id="refresh-nodes">
                                 <i class="bi bi-arrow-clockwise"></i> Refresh Nodes
                             </button>
                         </div>
                     </div>
-                    
+
                     <div class="row" id="nodes-container">
                         <!-- Nodes will be loaded here -->
                     </div>
@@ -829,6 +876,7 @@
             lastDataHash: null,
             nodes: {},
             portFilter: '',
+            nodeFilter: null, // {id: '!abc123', name: 'NodeName'}
             stats: {
                 totalPackets: 0,
                 totalNodes: 0,
@@ -917,6 +965,11 @@
                     }
                 });
             });
+
+            // Node search filter
+            document.getElementById('node-search').addEventListener('input', function(e) {
+                filterNodes(e.target.value);
+            });
         }
 
         function loadInitialData() {
@@ -956,7 +1009,8 @@
 
         function fetchPackets() {
             const filterParam = appState.portFilter ? `&port_filter=${appState.portFilter}` : '';
-            fetch(`/packets?limit=${appState.limit}&offset=${appState.offset}${filterParam}`)
+            const nodeFilterParam = appState.nodeFilter ? `&node_filter=${encodeURIComponent(appState.nodeFilter.id)}` : '';
+            fetch(`/packets?limit=${appState.limit}&offset=${appState.offset}${filterParam}${nodeFilterParam}`)
                 .then(response => response.json())
                 .then(response => {
                     const packets = response.packets || response;
@@ -1041,6 +1095,12 @@
             const portIcon = getPortIcon(packet.port_name);
             const fromName = resolveNodeName(packet, 'from');
             const toName = resolveNodeName(packet, 'to');
+            const fromId = packet.from_id;
+            const toId = packet.to_id;
+
+            // Escape names for use in onclick attributes
+            const fromNameEscaped = fromName.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+            const toNameEscaped = toName.replace(/'/g, "\\'").replace(/"/g, '&quot;');
 
             card.innerHTML = `
                 <div class="card-header card-header-modern">
@@ -1049,9 +1109,9 @@
                             ${portIcon} ${packet.port_name} - ${timestamp}
                         </h6>
                         <div>
-                            <span class="node-badge">${fromName}</span>
+                            <span class="node-badge node-badge-clickable" onclick="filterByNode('${fromId}', '${fromNameEscaped}')" title="Filter by this node">${fromName}</span>
                             <i class="bi bi-arrow-right mx-2"></i>
-                            <span class="node-badge">${toName}</span>
+                            <span class="node-badge node-badge-clickable" onclick="filterByNode('${toId}', '${toNameEscaped}')" title="Filter by this node">${toName}</span>
                         </div>
                     </div>
                 </div>
@@ -1067,7 +1127,7 @@
                     </div>
                 </div>
             `;
-            
+
             return card;
         }
 
@@ -1231,11 +1291,21 @@
                         // Only update if node doesn't exist or this timestamp is more recent
                         if (packet.from_id && packet.from_name) {
                             if (!nodes[packet.from_id] || new Date(packet.timestamp) > new Date(nodes[packet.from_id].lastSeen)) {
+                                // Try to get shortName from NODEINFO packets
+                                let shortName = nodes[packet.from_id]?.shortName || '';
+                                if (packet.port_name === 'NODEINFO_APP' && packet.raw_packet?.decoded?.user?.shortName) {
+                                    shortName = packet.raw_packet.decoded.user.shortName;
+                                }
                                 nodes[packet.from_id] = {
                                     id: packet.from_id,
-                                    name: packet.from_name,
+                                    name: resolveNodeName(packet, 'from'),
+                                    shortName: shortName,
                                     lastSeen: packet.timestamp
                                 };
+                            }
+                            // Update shortName from NODEINFO even if not most recent
+                            if (packet.port_name === 'NODEINFO_APP' && packet.raw_packet?.decoded?.user?.shortName) {
+                                nodes[packet.from_id].shortName = packet.raw_packet.decoded.user.shortName;
                             }
                         }
                         if (packet.to_id && packet.to_name && packet.to_id !== '^all') {
@@ -1243,23 +1313,103 @@
                                 nodes[packet.to_id] = {
                                     id: packet.to_id,
                                     name: packet.to_name,
+                                    shortName: nodes[packet.to_id]?.shortName || '',
                                     lastSeen: packet.timestamp
                                 };
                             }
                         }
                     });
-                    
+
                     appState.nodes = nodes;
                     // Sort by lastSeen descending (most recent first)
                     const sortedNodes = Object.values(nodes).sort((a, b) =>
                         new Date(b.lastSeen) - new Date(a.lastSeen)
                     );
+                    appState.sortedNodes = sortedNodes;
                     renderNodes(sortedNodes);
                     populateNodeSelects(sortedNodes);
                 })
                 .catch(error => {
                     console.error('Error fetching nodes:', error);
                 });
+        }
+
+        function filterNodes(searchTerm) {
+            if (!appState.sortedNodes) return;
+            const term = searchTerm.toLowerCase();
+            const filtered = appState.sortedNodes.filter(node =>
+                node.name.toLowerCase().includes(term) ||
+                node.id.toLowerCase().includes(term) ||
+                (node.shortName && node.shortName.toLowerCase().includes(term))
+            );
+            renderNodes(filtered);
+        }
+
+        function filterByNode(nodeId, nodeName) {
+            // Set the node filter
+            appState.nodeFilter = { id: nodeId, name: nodeName };
+            appState.offset = 0;
+            appState.lastDataHash = null;
+            appState.displayedPackets = {};
+
+            // Clear and destroy existing maps
+            Object.keys(appState.initializedMaps).forEach(mapId => {
+                try {
+                    appState.initializedMaps[mapId].remove();
+                } catch (e) {}
+            });
+            appState.initializedMaps = {};
+
+            // Update the filter indicator
+            updateNodeFilterIndicator();
+
+            // Switch to Live Packets tab if not already there
+            const packetsTab = document.getElementById('packets-tab');
+            if (!packetsTab.classList.contains('active')) {
+                const tab = new bootstrap.Tab(packetsTab);
+                tab.show();
+            }
+
+            // Fetch filtered packets
+            fetchPackets();
+        }
+
+        function clearNodeFilter() {
+            appState.nodeFilter = null;
+            appState.offset = 0;
+            appState.lastDataHash = null;
+            appState.displayedPackets = {};
+
+            // Clear and destroy existing maps
+            Object.keys(appState.initializedMaps).forEach(mapId => {
+                try {
+                    appState.initializedMaps[mapId].remove();
+                } catch (e) {}
+            });
+            appState.initializedMaps = {};
+
+            // Update the filter indicator
+            updateNodeFilterIndicator();
+
+            // Fetch unfiltered packets
+            fetchPackets();
+        }
+
+        function updateNodeFilterIndicator() {
+            const indicator = document.getElementById('node-filter-indicator');
+            if (appState.nodeFilter) {
+                indicator.innerHTML = `
+                    <span class="filter-indicator">
+                        <i class="bi bi-funnel-fill"></i>
+                        Filtering: ${appState.nodeFilter.name}
+                        <button type="button" class="btn-close btn-close-white btn-sm" onclick="clearNodeFilter()" title="Clear filter"></button>
+                    </span>
+                `;
+                indicator.style.display = 'inline-block';
+            } else {
+                indicator.innerHTML = '';
+                indicator.style.display = 'none';
+            }
         }
 
         function renderNodes(nodes) {
@@ -1284,12 +1434,14 @@
             nodes.forEach(node => {
                 const nodeCard = document.createElement('div');
                 nodeCard.className = 'col-md-6 col-lg-4';
+                const shortNameDisplay = node.shortName ? `<span class="badge bg-secondary ms-2">${node.shortName}</span>` : '';
+                const nodeNameEscaped = node.name.replace(/'/g, "\\'").replace(/"/g, '&quot;');
                 nodeCard.innerHTML = `
                     <div class="card card-modern">
                         <div class="card-body">
                             <div class="d-flex align-items-center mb-3">
                                 <div class="status-indicator status-online"></div>
-                                <h6 class="mb-0">${node.name}</h6>
+                                <h6 class="mb-0 node-name-clickable" onclick="filterByNode('${node.id}', '${nodeNameEscaped}')" title="View traffic from this node">${node.name}${shortNameDisplay}</h6>
                             </div>
                             <p class="text-muted small mb-2">
                                 <i class="bi bi-hash"></i> ${node.id}
