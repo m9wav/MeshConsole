@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="logo.png" alt="MeshConsole" width="400"/>
+  <img src="https://raw.githubusercontent.com/m9wav/MeshConsole/main/logo.png" alt="MeshConsole" width="400"/>
 </p>
 
 <p align="center">
