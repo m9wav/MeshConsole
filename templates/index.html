@@ -217,6 +217,12 @@
             padding: 0.25rem 0.75rem;
             border-radius: 20px;
             font-size: 0.875rem;
+            white-space: nowrap;
+            max-width: 150px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            display: inline-block;
+            vertical-align: middle;
             font-weight: 500;
         }
 
@@ -370,6 +376,25 @@
             .btn-modern {
                 padding: 0.4rem 0.75rem;
                 font-size: 0.8rem;
+            }
+
+            /* Fix packet card header on mobile - stack elements vertically */
+            .card-header-modern .d-flex.justify-content-between {
+                flex-direction: column;
+                align-items: flex-start !important;
+                gap: 0.5rem;
+            }
+
+            .card-header-modern .d-flex.justify-content-between > div {
+                width: 100%;
+                display: flex;
+                flex-wrap: wrap;
+                gap: 0.25rem;
+            }
+
+            .node-badge {
+                max-width: 120px;
+                font-size: 0.75rem;
             }
         }
     </style>
@@ -800,7 +825,7 @@
             initializedMaps: {},
             displayedPackets: {},
             autoRefreshTimer: null,
-            sessionStart: new Date(),
+            sessionStart: null, // Will be loaded from localStorage or set fresh
             lastDataHash: null,
             nodes: {},
             portFilter: '',
@@ -820,7 +845,14 @@
         });
 
         function initializeApp() {
-            // Set session start time
+            // Load or set session start time (persisted in localStorage)
+            const storedSessionStart = localStorage.getItem('meshconsole_session_start');
+            if (storedSessionStart) {
+                appState.sessionStart = new Date(storedSessionStart);
+            } else {
+                appState.sessionStart = new Date();
+                localStorage.setItem('meshconsole_session_start', appState.sessionStart.toISOString());
+            }
             document.getElementById('session-start').textContent = appState.sessionStart.toLocaleTimeString();
             
             // Initialize charts
@@ -858,6 +890,14 @@
                 appState.portFilter = this.value;
                 appState.offset = 0;
                 appState.lastDataHash = null; // Force re-render
+                appState.displayedPackets = {}; // Clear displayed packets
+                // Clear and destroy existing maps to prevent conflicts
+                Object.keys(appState.initializedMaps).forEach(mapId => {
+                    try {
+                        appState.initializedMaps[mapId].remove();
+                    } catch (e) {}
+                });
+                appState.initializedMaps = {};
                 fetchPackets();
             });
 
