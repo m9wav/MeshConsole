@@ -915,11 +915,13 @@
             document.getElementById('prev-button').addEventListener('click', () => {
                 appState.offset = Math.max(0, appState.offset - appState.limit);
                 fetchPackets();
+                document.getElementById('packets-container').scrollIntoView({ behavior: 'smooth' });
             });
-            
+
             document.getElementById('next-button').addEventListener('click', () => {
                 appState.offset += appState.limit;
                 fetchPackets();
+                document.getElementById('packets-container').scrollIntoView({ behavior: 'smooth' });
             });
 
             // Refresh buttons
