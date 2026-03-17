@@ -4,14 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "meshconsole"
-version = "2.2.2"
-description = "A powerful CLI and web interface for Meshtastic mesh networking devices"
+version = "3.0.0"
+description = "A powerful CLI and web interface for Meshtastic and MeshCore mesh networking devices"
 readme = "README.md"
 license = "MIT"
 authors = [
     { name = "M9WAV", email = "m9wav@hackers.uk" }
 ]
-keywords = ["meshtastic", "mesh", "networking", "lora", "radio", "ham", "amateur-radio"]
+keywords = ["meshtastic", "meshcore", "mesh", "networking", "lora", "radio", "ham", "amateur-radio"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
@@ -39,8 +39,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+meshcore = ["meshcore>=0.1.0"]
+all = ["meshcore>=0.1.0"]
 dev = [
     "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
     "build",
     "twine",
 ]
@@ -52,6 +55,13 @@ Issues = "https://github.com/m9wav/MeshConsole/issues"
 
 [project.scripts]
 meshconsole = "meshconsole.core:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Use importlib mode to avoid sys.path manipulation that would cause
+# the standalone meshconsole.py to shadow the installed package.
+# Ensure the src layout package is found before the standalone meshconsole.py
+pythonpath = ["src"]
 
 [tool.hatch.build.targets.sdist]
 include = [

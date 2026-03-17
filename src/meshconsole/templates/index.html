@@ -350,6 +350,28 @@
             color: #cbd5e1 !important;
         }
 
+        /* Backend badges */
+        .backend-badge {
+            font-size: 0.7rem;
+            padding: 0.15rem 0.5rem;
+            border-radius: 10px;
+            font-weight: 600;
+            letter-spacing: 0.3px;
+            vertical-align: middle;
+        }
+
+        .backend-status-item {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            font-size: 0.85rem;
+        }
+
+        .backend-status-separator {
+            margin: 0 0.5rem;
+            opacity: 0.5;
+        }
+
         /* Auth required banner */
         .auth-required-banner {
             border-left: 4px solid #d97706;
@@ -420,7 +442,8 @@
                 font-size: 0.7rem;
             }
 
-            #port-filter {
+            #port-filter,
+            #backend-filter {
                 width: 100% !important;
                 min-width: unset !important;
                 margin-bottom: 0.5rem;
@@ -470,10 +493,14 @@
                 <span class="navbar-brand">
                     <i class="bi bi-broadcast"></i> MeshConsole by <a href="https://m9wav.uk/" target="_blank" rel="noopener" style="color: inherit; text-decoration: none;">M9WAV</a> <a href="https://github.com/m9wav/MeshConsole" target="_blank" rel="noopener" style="color: inherit; margin-left: 8px;"><i class="bi bi-github"></i></a>
                 </span>
-                <div class="d-flex align-items-center text-white">
-                    <span class="status-indicator status-online"></span>
-                    <span id="connection-status">Connected</span>
-                    <span class="ms-3" id="last-update">Last update: Never</span>
+                <div class="d-flex align-items-center text-white flex-wrap gap-2">
+                    <span id="backend-status-area">
+                        <span class="backend-status-item">
+                            <span class="status-indicator status-online"></span>
+                            <span id="connection-status">Connected</span>
+                        </span>
+                    </span>
+                    <span class="ms-2" id="last-update">Last update: Never</span>
                 </div>
             </div>
         </nav>
@@ -524,15 +551,21 @@
                         </div>
                         <div class="col-md-6 text-end d-flex align-items-center justify-content-end gap-2 flex-wrap">
                             <div id="node-filter-indicator" style="display: none;"></div>
+                            <select class="form-select form-control-modern" id="backend-filter" style="width: auto; min-width: 150px;">
+                                <option value="">All Backends</option>
+                                <option value="meshtastic">Meshtastic</option>
+                                <option value="meshcore">MeshCore</option>
+                            </select>
                             <select class="form-select form-control-modern" id="port-filter" style="width: auto; min-width: 160px;">
                                 <option value="">All Types</option>
-                                <option value="TEXT_MESSAGE_APP">Messages</option>
+                                <option value="TEXT_MESSAGE_APP,TEXT_MESSAGE,TEXT_MSG,GRP_TXT">Messages</option>
                                 <option value="POSITION_APP">Position</option>
-                                <option value="TELEMETRY_APP">Telemetry</option>
-                                <option value="NODEINFO_APP">Node Info</option>
-                                <option value="TRACEROUTE_APP">Traceroute</option>
-                                <option value="ROUTING_APP">Routing</option>
+                                <option value="TELEMETRY_APP,TELEMETRY">Telemetry</option>
+                                <option value="NODEINFO_APP,NODEINFO">Node Info</option>
+                                <option value="TRACEROUTE_APP,TRACEROUTE">Traceroute</option>
+                                <option value="ROUTING_APP,ROUTING,RESPONSE,REQ">Routing</option>
                                 <option value="NEIGHBORINFO_APP">Neighbor Info</option>
+                                <option value="CONTROL">Control</option>
                             </select>
                             <button class="btn btn-outline-primary btn-modern" id="unique-locations-toggle" title="Show only unique locations (latest position per node)">
                                 <i class="bi bi-geo-alt"></i> Unique Locations
@@ -862,8 +895,11 @@
                                 </div>
                                 <div class="card-body">
                                     <small class="text-muted">
-                                        <div>Version: 2.1.0</div>
+                                        <div>Version: 3.0.0</div>
                                         <div>Local Node: <span id="local-node">Detecting...</span></div>
+                                        <div id="backend-mode-display"></div>
+                                        <div id="meshtastic-device-display"></div>
+                                        <div id="meshcore-device-display"></div>
                                         <div>Session: <span id="session-start">Just started</span></div>
                                     </small>
                                 </div>
@@ -910,6 +946,7 @@
             lastDataHash: null,
             nodes: {},
             portFilter: '',
+            backendFilter: '',
             nodeFilter: null, // {id: '!abc123', name: 'NodeName'}
             uniqueLocations: false,
             stats: {
@@ -982,6 +1019,19 @@
                     try {
                         appState.initializedMaps[mapId].remove();
                     } catch (e) {}
+                });
+                appState.initializedMaps = {};
+                fetchPackets();
+            });
+
+            // Backend filter
+            document.getElementById('backend-filter').addEventListener('change', function() {
+                appState.backendFilter = this.value;
+                appState.offset = 0;
+                appState.lastDataHash = null;
+                appState.displayedPackets = {};
+                Object.keys(appState.initializedMaps).forEach(mapId => {
+                    try { appState.initializedMaps[mapId].remove(); } catch (e) {}
                 });
                 appState.initializedMaps = {};
                 fetchPackets();
@@ -1088,7 +1138,8 @@
             const filterParam = appState.portFilter ? `&port_filter=${appState.portFilter}` : '';
             const nodeFilterParam = appState.nodeFilter ? `&node_filter=${encodeURIComponent(appState.nodeFilter.id)}` : '';
             const uniqueLocationsParam = appState.uniqueLocations ? '&unique_locations=1' : '';
-            fetch(`/packets?limit=${appState.limit}&offset=${appState.offset}${filterParam}${nodeFilterParam}${uniqueLocationsParam}`)
+            const backendParam = appState.backendFilter ? `&backend=${appState.backendFilter}` : '';
+            fetch(`/packets?limit=${appState.limit}&offset=${appState.offset}${filterParam}${nodeFilterParam}${uniqueLocationsParam}${backendParam}`)
                 .then(response => response.json())
                 .then(response => {
                     const packets = response.packets || response;
@@ -1154,10 +1205,32 @@
             }
 
             // Fallback: for NODEINFO packets, try to get name from raw_packet
-            if (packet.port_name === 'NODEINFO_APP' && field === 'from') {
+            if ((packet.port_name === 'NODEINFO_APP' || packet.port_name === 'NODEINFO') && field === 'from') {
+                // Meshtastic format
                 const longName = packet.raw_packet?.decoded?.user?.longName;
                 if (longName) {
                     return longName;
+                }
+                // MeshCore format
+                const advName = packet.raw_packet?.adv_name || packet.raw_packet?.name;
+                if (advName) {
+                    return advName;
+                }
+            }
+
+            // For MeshCore packets, try to get name from raw_packet adv_name
+            if (field === 'from' && packet.backend === 'meshcore' && packet.raw_packet) {
+                const advName = packet.raw_packet.adv_name || packet.raw_packet.name;
+                if (advName) {
+                    return advName;
+                }
+            }
+
+            // Check the nodes cache for a known name
+            if (id && appState.nodes && appState.nodes[id]) {
+                const cachedName = appState.nodes[id].name;
+                if (cachedName && cachedName !== id) {
+                    return cachedName;
                 }
             }
 
@@ -1180,11 +1253,19 @@
             const fromNameEscaped = fromName.replace(/'/g, "\\'").replace(/"/g, '&quot;');
             const toNameEscaped = toName.replace(/'/g, "\\'").replace(/"/g, '&quot;');
 
+            const backendBadge = getBackendBadge(packet);
+
+            const rssiDisplay = formatSignalValue(packet.rssi, 'dBm');
+            const snrDisplay = formatSignalValue(packet.snr, 'dB');
+            const hopDisplay = (packet.hop_limit !== null && packet.hop_limit !== undefined && packet.hop_limit !== 'N/A')
+                ? packet.hop_limit : 'N/A';
+            const hopLabel = (packet.backend === 'meshcore') ? 'Path Length' : 'Hop Limit';
+
             card.innerHTML = `
                 <div class="card-header card-header-modern">
                     <div class="d-flex justify-content-between align-items-center">
                         <h6 class="mb-0">
-                            ${portIcon} ${packet.port_name} - ${timestamp}
+                            ${portIcon} ${packet.port_name}${backendBadge} - ${timestamp}
                         </h6>
                         <div>
                             <span class="node-badge node-badge-clickable" onclick="filterByNode('${fromId}', '${fromNameEscaped}')" title="Filter by this node">${fromName}</span>
@@ -1197,10 +1278,10 @@
                     ${renderPacketContent(packet, index)}
                     <div class="row mt-3 text-muted small">
                         <div class="col-md-6">
-                            <i class="bi bi-signal"></i> RSSI: ${packet.rssi} dBm | SNR: ${packet.snr} dB
+                            <i class="bi bi-signal"></i> RSSI: ${rssiDisplay} | SNR: ${snrDisplay}
                         </div>
                         <div class="col-md-6 text-end">
-                            <i class="bi bi-layers"></i> Hop Limit: ${packet.hop_limit || 'N/A'}
+                            <i class="bi bi-layers"></i> ${hopLabel}: ${hopDisplay}
                         </div>
                     </div>
                 </div>
@@ -1212,6 +1293,9 @@
         function renderPacketContent(packet, index) {
             switch (packet.port_name) {
                 case 'TEXT_MESSAGE_APP':
+                case 'TEXT_MESSAGE':
+                case 'TEXT_MSG':
+                case 'GRP_TXT':
                     return `
                         <div class="message-bubble">
                             <i class="bi bi-chat-text text-primary"></i>
@@ -1242,13 +1326,34 @@
                     `;
                 
                 case 'TELEMETRY_APP':
+                case 'TELEMETRY':
+                    const isMcTelemetry = packet.backend === 'meshcore';
+                    const voltageDisplay = packet.voltage ? `${parseFloat(packet.voltage).toFixed(2)}V` : 'N/A';
+                    if (isMcTelemetry) {
+                        // MeshCore telemetry — show voltage and any payload info
+                        return `
+                            <h6><i class="bi bi-speedometer text-info"></i> Telemetry Data (MeshCore)</h6>
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <ul class="list-unstyled">
+                                        <li><i class="bi bi-lightning"></i> Voltage: ${voltageDisplay}</li>
+                                    </ul>
+                                </div>
+                                <div class="col-md-6">
+                                    <ul class="list-unstyled">
+                                        ${packet.payload ? `<li><i class="bi bi-info-circle"></i> ${packet.payload}</li>` : ''}
+                                    </ul>
+                                </div>
+                            </div>
+                        `;
+                    }
                     return `
                         <h6><i class="bi bi-speedometer text-info"></i> Telemetry Data</h6>
                         <div class="row">
                             <div class="col-md-6">
                                 <ul class="list-unstyled">
                                     <li><i class="bi bi-battery"></i> Battery: ${packet.battery_level || 'N/A'}%</li>
-                                    <li><i class="bi bi-lightning"></i> Voltage: ${packet.voltage || 'N/A'}V</li>
+                                    <li><i class="bi bi-lightning"></i> Voltage: ${voltageDisplay}</li>
                                 </ul>
                             </div>
                             <div class="col-md-6">
@@ -1261,7 +1366,31 @@
                     `;
                 
                 case 'NODEINFO_APP':
+                case 'NODEINFO':
                     const nodeInfo = packet.raw_packet?.decoded?.user || {};
+                    const isMeshCore = packet.backend === 'meshcore' || (packet.from_id && packet.from_id.startsWith('mc:'));
+                    if (isMeshCore) {
+                        const hasCoords = packet.latitude && packet.longitude && packet.latitude !== 0 && packet.longitude !== 0;
+                        const mcMapId = hasCoords ? `map-mc-${packet.timestamp}-${index}` : null;
+                        if (mcMapId) {
+                            setTimeout(() => initializePacketMap(mcMapId, packet.latitude, packet.longitude), 100);
+                        }
+                        return `
+                            <div class="row">
+                                <div class="${hasCoords ? 'col-md-6' : 'col-12'}">
+                                    <h6><i class="bi bi-info-circle text-warning"></i> Node Information (MeshCore)</h6>
+                                    <ul class="list-unstyled">
+                                        <li><strong>Name:</strong> ${packet.from_name || 'Unknown'}</li>
+                                        <li><strong>Public Key:</strong> <code>${packet.from_id || 'Unknown'}</code></li>
+                                        ${hasCoords ? `<li><strong>Location:</strong> ${packet.latitude.toFixed(6)}, ${packet.longitude.toFixed(6)}</li>` : ''}
+                                        ${packet.payload ? `<li><strong>Info:</strong> ${packet.payload}</li>` : ''}
+                                    </ul>
+                                    ${hasCoords ? `<button class="btn btn-primary-modern btn-sm" onclick="showExpandedMap(${packet.latitude}, ${packet.longitude})"><i class="bi bi-arrows-fullscreen"></i> Expand Map</button>` : ''}
+                                </div>
+                                ${hasCoords ? `<div class="col-md-6"><div id="${mcMapId}" class="packet-map"></div></div>` : ''}
+                            </div>
+                        `;
+                    }
                     return `
                         <h6><i class="bi bi-info-circle text-warning"></i> Node Information</h6>
                         <ul class="list-unstyled">
@@ -1272,29 +1401,85 @@
                     `;
                 
                 case 'TRACEROUTE_APP':
+                case 'TRACEROUTE':
                     return `
                         <h6><i class="bi bi-diagram-3 text-primary"></i> Traceroute Data</h6>
                         <p>Traceroute response received. Check the Traceroute tab for detailed analysis.</p>
                     `;
                 
+                case 'ROUTING':
+                case 'ROUTING_APP':
+                    return `
+                        <h6><i class="bi bi-signpost text-secondary"></i> Routing Data</h6>
+                        <p>${packet.payload || 'Routing acknowledgment received.'}</p>
+                    `;
+
+                case 'STATUS':
+                    return `
+                        <h6><i class="bi bi-activity text-success"></i> Status Update</h6>
+                        <p>${packet.payload || 'Device status response received.'}</p>
+                    `;
+
+                case 'CONTROL':
+                    return `
+                        <h6><i class="bi bi-gear text-secondary"></i> Control Data</h6>
+                        <p>${packet.payload || 'Control packet received.'}</p>
+                    `;
+
                 default:
                     return `
-                        <h6><i class="bi bi-question-circle text-secondary"></i> Unknown Packet Type</h6>
-                        <p>Port: ${packet.port_name}</p>
+                        <h6><i class="bi bi-broadcast text-secondary"></i> ${packet.port_name || 'Unknown'} Packet</h6>
+                        <p>${packet.payload || 'Packet data received.'}</p>
                     `;
             }
+        }
+
+        function formatSignalValue(value, unit) {
+            if (value === null || value === undefined || value === '' || value === 'N/A' || value === 'Unknown') {
+                return 'N/A';
+            }
+            if (typeof value === 'number') {
+                return `${value} ${unit}`;
+            }
+            // Already a string with content
+            return `${value} ${unit}`;
         }
 
         function getPortIcon(portName) {
             const icons = {
                 'TEXT_MESSAGE_APP': '<i class="bi bi-chat-text text-primary"></i>',
+                'TEXT_MESSAGE': '<i class="bi bi-chat-text text-primary"></i>',
                 'POSITION_APP': '<i class="bi bi-geo-alt text-success"></i>',
                 'TELEMETRY_APP': '<i class="bi bi-speedometer text-info"></i>',
+                'TELEMETRY': '<i class="bi bi-speedometer text-info"></i>',
                 'NODEINFO_APP': '<i class="bi bi-info-circle text-warning"></i>',
+                'NODEINFO': '<i class="bi bi-info-circle text-warning"></i>',
                 'TRACEROUTE_APP': '<i class="bi bi-diagram-3 text-primary"></i>',
-                'ROUTING_APP': '<i class="bi bi-signpost text-secondary"></i>'
+                'TRACEROUTE': '<i class="bi bi-diagram-3 text-primary"></i>',
+                'ROUTING_APP': '<i class="bi bi-signpost text-secondary"></i>',
+                'ROUTING': '<i class="bi bi-signpost text-secondary"></i>',
+                'NEIGHBORINFO_APP': '<i class="bi bi-people text-info"></i>',
+                'STATUS': '<i class="bi bi-activity text-success"></i>',
+                'TEXT_MSG': '<i class="bi bi-chat-text text-primary"></i>',
+                'GRP_TXT': '<i class="bi bi-chat-text text-primary"></i>',
+                'CONTROL': '<i class="bi bi-gear text-secondary"></i>',
+                'RESPONSE': '<i class="bi bi-signpost text-secondary"></i>',
+                'REQ': '<i class="bi bi-signpost text-secondary"></i>',
             };
             return icons[portName] || '<i class="bi bi-question-circle text-muted"></i>';
+        }
+
+        function getBackendBadge(packet) {
+            // Defensively check if backend field exists
+            const backend = packet.backend || packet.backend_type;
+            if (!backend) return '';
+            if (backend === 'meshcore') {
+                return '<span class="badge bg-warning text-dark backend-badge ms-2">MeshCore</span>';
+            }
+            if (backend === 'meshtastic') {
+                return '<span class="badge bg-primary backend-badge ms-2">Meshtastic</span>';
+            }
+            return '';
         }
 
         function initializePacketMap(mapId, lat, lon) {
@@ -1373,28 +1558,38 @@
                         name: node.longName || node.id,
                         shortName: node.shortName || '',
                         hwModel: node.hwModel || '',
-                        lastSeen: node.lastSeen
+                        lastSeen: node.lastSeen,
+                        backend: node.backend || (node.id.startsWith('mc:') ? 'meshcore' : 'meshtastic'),
                     };
                 });
 
                 // Then update lastSeen from recent packets (more accurate activity times)
                 const packets = packetsResponse.packets || packetsResponse;
                 packets.forEach(packet => {
-                    if (packet.from_id) {
-                        if (nodes[packet.from_id]) {
-                            // Update lastSeen if packet is more recent
-                            if (new Date(packet.timestamp) > new Date(nodes[packet.from_id].lastSeen)) {
-                                nodes[packet.from_id].lastSeen = packet.timestamp;
-                            }
-                        } else {
-                            // Node not in NODEINFO, add from packet
-                            nodes[packet.from_id] = {
-                                id: packet.from_id,
-                                name: packet.from_name || packet.from_id || 'Unknown',
-                                shortName: '',
-                                lastSeen: packet.timestamp
-                            };
+                    if (!packet.from_id) return;
+
+                    // Skip invalid node IDs
+                    if (packet.from_id === 'channel' || packet.from_id === 'broadcast' || packet.from_id === 'self') return;
+                    if (packet.from_id.startsWith('mc:')) {
+                        const suffix = packet.from_id.slice(3);
+                        if (/^\d+$/.test(suffix) || suffix === 'unknown') return;
+                        if (appState.localNodeId && packet.from_id === appState.localNodeId) return;
+                    }
+
+                    if (nodes[packet.from_id]) {
+                        // Update lastSeen if packet is more recent
+                        if (new Date(packet.timestamp) > new Date(nodes[packet.from_id].lastSeen)) {
+                            nodes[packet.from_id].lastSeen = packet.timestamp;
                         }
+                    } else {
+                        // Node not in NODEINFO, add from packet
+                        nodes[packet.from_id] = {
+                            id: packet.from_id,
+                            name: packet.from_name || packet.from_id || 'Unknown',
+                            shortName: '',
+                            lastSeen: packet.timestamp,
+                            backend: packet.backend || (packet.from_id.startsWith('mc:') ? 'meshcore' : 'meshtastic'),
+                        };
                     }
                 });
 
@@ -1525,15 +1720,25 @@
                 nodeCard.className = 'col-md-6 col-lg-4';
                 const shortNameDisplay = node.shortName ? `<span class="badge bg-secondary ms-2">${node.shortName}</span>` : '';
                 const nodeNameEscaped = node.name.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                // Backend badge for node cards
+                let nodeBackendBadge = '';
+                const nodeBackend = node.backend;
+                if (nodeBackend === 'meshcore') {
+                    nodeBackendBadge = '<span class="badge bg-warning text-dark backend-badge ms-2">MeshCore</span>';
+                } else if (nodeBackend === 'meshtastic') {
+                    nodeBackendBadge = '<span class="badge bg-primary backend-badge ms-2">Meshtastic</span>';
+                }
+                // For MeshCore nodes, show the pubkey prefix as ID format
+                const nodeIdDisplay = node.id.startsWith('mc:') ? `<i class="bi bi-key"></i> ${node.id}` : `<i class="bi bi-hash"></i> ${node.id}`;
                 nodeCard.innerHTML = `
                     <div class="card card-modern">
                         <div class="card-body">
                             <div class="d-flex align-items-center mb-3">
                                 <div class="status-indicator status-online"></div>
-                                <h6 class="mb-0 node-name-clickable" onclick="filterByNode('${node.id}', '${nodeNameEscaped}')" title="View traffic from this node">${node.name}${shortNameDisplay}</h6>
+                                <h6 class="mb-0 node-name-clickable" onclick="filterByNode('${node.id}', '${nodeNameEscaped}')" title="View traffic from this node">${node.name}${shortNameDisplay}${nodeBackendBadge}</h6>
                             </div>
                             <p class="text-muted small mb-2">
-                                <i class="bi bi-hash"></i> ${node.id}
+                                ${nodeIdDisplay}
                             </p>
                             <p class="text-muted small mb-0">
                                 <i class="bi bi-clock"></i> Last seen: ${new Date(node.lastSeen).toLocaleString()}
@@ -1819,7 +2024,8 @@
         }
 
         function fetchStats() {
-            fetch('/stats')
+            const backendParam = appState.backendFilter ? `?backend=${appState.backendFilter}` : '';
+            fetch(`/stats${backendParam}`)
                 .then(response => response.json())
                 .then(data => {
                     updateStatsDisplay(data);
@@ -1978,22 +2184,74 @@
                             document.getElementById('session-start').textContent = startTime.toLocaleTimeString();
                         }
 
-                        // Update connection status indicator
-                        const statusIndicator = document.querySelector('.status-indicator');
-                        const statusText = document.getElementById('connection-status');
-                        if (data.connected) {
-                            statusIndicator.classList.remove('status-offline');
-                            statusIndicator.classList.add('status-online');
-                            statusText.textContent = 'Connected';
+                        // Update connection status — per-backend if available
+                        const statusArea = document.getElementById('backend-status-area');
+                        if (data.backends && Object.keys(data.backends).length > 0) {
+                            let statusHtml = '';
+                            const backendEntries = Object.entries(data.backends);
+                            backendEntries.forEach(([name, info], idx) => {
+                                const isConn = info.connected;
+                                const indicatorClass = isConn ? 'status-online' : 'status-offline';
+                                const label = name.charAt(0).toUpperCase() + name.slice(1);
+                                const statusLabel = isConn ? 'Connected' : 'Disconnected';
+                                const deviceName = info.device_name ? ` (${info.device_name})` : '';
+                                statusHtml += `<span class="backend-status-item">`;
+                                statusHtml += `<span class="status-indicator ${indicatorClass}"></span>`;
+                                if (backendEntries.length > 1) {
+                                    statusHtml += `${label}: ${statusLabel}${deviceName}`;
+                                } else {
+                                    statusHtml += `${statusLabel}${deviceName}`;
+                                }
+                                statusHtml += `</span>`;
+                                if (idx < backendEntries.length - 1) {
+                                    statusHtml += `<span class="backend-status-separator">|</span>`;
+                                }
+                            });
+                            statusArea.innerHTML = statusHtml;
                         } else {
-                            statusIndicator.classList.remove('status-online');
-                            statusIndicator.classList.add('status-offline');
-                            statusText.textContent = 'Disconnected';
+                            // Fallback: single status indicator
+                            const isConn = data.connected;
+                            const indicatorClass = isConn ? 'status-online' : 'status-offline';
+                            const statusLabel = isConn ? 'Connected' : 'Disconnected';
+                            statusArea.innerHTML = `<span class="backend-status-item"><span class="status-indicator ${indicatorClass}"></span>${statusLabel}</span>`;
                         }
 
                         // Update local node ID if available
                         if (data.local_node_id) {
                             document.getElementById('local-node').textContent = data.local_node_id;
+                            appState.localNodeId = data.local_node_id;
+                        }
+
+                        // Update backend mode and MeshCore device info
+                        if (data.backend_mode) {
+                            const modeDisplay = document.getElementById('backend-mode-display');
+                            if (modeDisplay) {
+                                modeDisplay.textContent = `Backend Mode: ${data.backend_mode}`;
+                            }
+                        }
+                        if (data.backends) {
+                            // Update Meshtastic info in System Info card
+                            if (data.backends.meshtastic) {
+                                const mtDisplay = document.getElementById('meshtastic-device-display');
+                                if (mtDisplay) {
+                                    const mt = data.backends.meshtastic;
+                                    let mtInfo = `Meshtastic: ${mt.connected ? 'Connected' : 'Disconnected'}`;
+                                    if (mt.device_name) mtInfo += ` (${mt.device_name})`;
+                                    if (mt.local_node_id) mtInfo += ` [${mt.local_node_id}]`;
+                                    mtDisplay.textContent = mtInfo;
+                                }
+                            }
+                            // Update MeshCore info in System Info card
+                            if (data.backends.meshcore) {
+                                const mcDisplay = document.getElementById('meshcore-device-display');
+                                if (mcDisplay) {
+                                    const mc = data.backends.meshcore;
+                                    let mcInfo = `MeshCore: ${mc.connected ? 'Connected' : 'Disconnected'}`;
+                                    if (mc.device_name) mcInfo += ` (${mc.device_name})`;
+                                    if (mc.local_node_id) mcInfo += ` [${mc.local_node_id}]`;
+                                    mcDisplay.textContent = mcInfo;
+                                }
+                            }
                         }
                     }
                 })
@@ -2361,8 +2619,8 @@
             const actuallyNewPackets = newPackets.filter(p => !oldTimestamps.has(p.timestamp));
             
             actuallyNewPackets.forEach(packet => {
-                // Play sound for new messages
-                if (packet.port_name === 'TEXT_MESSAGE_APP' && packet.message) {
+                // Play sound for new messages (Meshtastic and MeshCore)
+                if ((packet.port_name === 'TEXT_MESSAGE_APP' || packet.port_name === 'TEXT_MESSAGE') && packet.message) {
                     playNotificationSound();
                     showDesktopNotification(
                         `New message from ${packet.from_name}`,
@@ -2370,9 +2628,9 @@
                         null
                     );
                 }
-                
+
                 // Notify for other important packet types
-                else if (packet.port_name === 'NODEINFO_APP') {
+                else if (packet.port_name === 'NODEINFO_APP' || packet.port_name === 'NODEINFO') {
                     showDesktopNotification(
                         'New Node Discovered',
                         `${packet.from_name} joined the network`,
