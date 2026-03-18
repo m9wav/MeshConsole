@@ -10,6 +10,7 @@ License: MIT
 """
 
 import argparse
+import json
 import logging
 import sys
 import time
@@ -24,7 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
 
-    parser.add_argument('--version', action='version', version='MeshConsole 3.1.1')
+    parser.add_argument('--version', action='version', version='MeshConsole 3.2.0')
 
     subparsers = parser.add_subparsers(dest='command', help='Available commands')
 
@@ -48,6 +49,9 @@ def build_parser() -> argparse.ArgumentParser:
                          help="MeshCore serial port")
         sub.add_argument('--mc-tcp', type=str, metavar='HOST:PORT',
                          help="MeshCore TCP host:port")
+        sub.add_argument('--device', action='append', metavar='TYPE:CONN:ADDR',
+                         dest='devices', default=None,
+                         help="Add a device (repeatable). Format: meshtastic:usb:/dev/ttyACM0 or meshcore:tcp:host:port")
 
     # ── send ──────────────────────────────────────────────────
 
@@ -100,8 +104,56 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _parse_device_spec(spec):
+    """Parse a --device TYPE:CONN:ADDR spec into a config dict.
+
+    Accepted formats:
+        meshtastic:usb:/dev/ttyACM0
+        meshtastic:tcp:192.168.1.100
+        meshcore:usb:/dev/ttyUSB0
+        meshcore:ble:AA:BB:CC:DD:EE:FF
+        meshcore:tcp:host:port
+    """
+    parts = spec.split(':', 2)
+    if len(parts) < 3:
+        raise ValueError(f"Invalid --device format: {spec}. Expected TYPE:CONN:ADDR")
+
+    btype, conn, addr = parts[0], parts[1], parts[2]
+    cfg = {
+        'type': btype,
+        'connection_type': conn,
+        'ip': '',
+        'serial_port': '',
+        'ble_address': '',
+        'ble_pin': '',
+        'tcp_host': '',
+        'tcp_port': '',
+        'device_id': '',
+    }
+
+    if btype == 'meshtastic':
+        if conn == 'usb':
+            cfg['serial_port'] = addr
+        elif conn == 'tcp':
+            cfg['ip'] = addr
+    elif btype == 'meshcore':
+        if conn == 'usb':
+            cfg['serial_port'] = addr
+        elif conn == 'ble':
+            cfg['ble_address'] = addr
+        elif conn == 'tcp':
+            if ':' in addr:
+                host, port = addr.rsplit(':', 1)
+                cfg['tcp_host'] = host
+                cfg['tcp_port'] = port
+            else:
+                cfg['tcp_host'] = addr
+
+    return cfg
+
+
 def _apply_backend_env(args):
-    """Translate --backend / --mc-* CLI args into environment variables.
+    """Translate --backend / --mc-* / --device CLI args into environment variables.
 
     MeshtasticTool.__init__ and _connect_meshcore() already read these env
     vars, so setting them before instantiation is the simplest bridge.
@@ -111,8 +163,26 @@ def _apply_backend_env(args):
 
     If no backend is specified and meshtastic is unavailable but meshcore is,
     defaults to meshcore mode.
+
+    v3.2.0: --device repeatable args are stored in MESHCONSOLE_DEVICES env var
+    as JSON for the orchestrator to read.
     """
     import os
+
+    # Handle --device repeatable args (v3.2.0 multi-device)
+    devices = getattr(args, 'devices', None)
+    if devices:
+        configs = [_parse_device_spec(d) for d in devices]
+        os.environ['MESHCONSOLE_DEVICE_CONFIGS'] = json.dumps(configs)
+        # Infer backend mode from device types
+        types = {c['type'] for c in configs}
+        if 'meshtastic' in types and 'meshcore' in types:
+            os.environ['MESHCONSOLE_BACKEND_MODE'] = 'dual'
+        elif 'meshcore' in types:
+            os.environ['MESHCONSOLE_BACKEND_MODE'] = 'meshcore'
+        else:
+            os.environ['MESHCONSOLE_BACKEND_MODE'] = 'meshtastic'
+        return  # --device overrides all other backend args
 
     backend = getattr(args, 'backend', None)
 

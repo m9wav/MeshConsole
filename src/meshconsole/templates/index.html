@@ -895,11 +895,10 @@
                                 </div>
                                 <div class="card-body">
                                     <small class="text-muted">
-                                        <div>Version: 3.0.0</div>
+                                        <div>Version: 3.2.0</div>
                                         <div>Local Node: <span id="local-node">Detecting...</span></div>
                                         <div id="backend-mode-display"></div>
-                                        <div id="meshtastic-device-display"></div>
-                                        <div id="meshcore-device-display"></div>
+                                        <div id="devices-display"></div>
                                         <div>Session: <span id="session-start">Just started</span></div>
                                     </small>
                                 </div>
@@ -2184,30 +2183,40 @@
                             document.getElementById('session-start').textContent = startTime.toLocaleTimeString();
                         }
 
-                        // Update connection status — per-backend if available
+                        // Update connection status -- per-backend
                         const statusArea = document.getElementById('backend-status-area');
-                        if (data.backends && Object.keys(data.backends).length > 0) {
+                        // v3.2.0: backends can be dict or backends_list array
+                        const backendsList = data.backends_list || [];
+                        const backendsDict = data.backends || {};
+                        const entries = backendsList.length > 0
+                            ? backendsList
+                            : Object.values(backendsDict);
+
+                        if (entries.length > 0) {
                             let statusHtml = '';
-                            const backendEntries = Object.entries(data.backends);
-                            backendEntries.forEach(([name, info], idx) => {
+                            entries.forEach((info, idx) => {
                                 const isConn = info.connected;
                                 const indicatorClass = isConn ? 'status-online' : 'status-offline';
-                                const label = name.charAt(0).toUpperCase() + name.slice(1);
+                                const typeName = (info.type || 'unknown');
+                                const label = typeName.charAt(0).toUpperCase() + typeName.slice(1);
                                 const statusLabel = isConn ? 'Connected' : 'Disconnected';
                                 const deviceName = info.device_name ? ` (${info.device_name})` : '';
                                 statusHtml += `<span class="backend-status-item">`;
                                 statusHtml += `<span class="status-indicator ${indicatorClass}"></span>`;
-                                if (backendEntries.length > 1) {
+                                if (entries.length > 1) {
                                     statusHtml += `${label}: ${statusLabel}${deviceName}`;
                                 } else {
                                     statusHtml += `${statusLabel}${deviceName}`;
                                 }
                                 statusHtml += `</span>`;
-                                if (idx < backendEntries.length - 1) {
+                                if (idx < entries.length - 1) {
                                     statusHtml += `<span class="backend-status-separator">|</span>`;
                                 }
                             });
                             statusArea.innerHTML = statusHtml;
+
+                            // Dynamically update backend filter dropdown
+                            updateBackendFilterDropdown(entries);
                         } else {
                             // Fallback: single status indicator
                             const isConn = data.connected;
@@ -2222,42 +2231,68 @@
                             appState.localNodeId = data.local_node_id;
                         }
 
-                        // Update backend mode and MeshCore device info
+                        // Update backend mode
                         if (data.backend_mode) {
                             const modeDisplay = document.getElementById('backend-mode-display');
                             if (modeDisplay) {
                                 modeDisplay.textContent = `Backend Mode: ${data.backend_mode}`;
                             }
                         }
-                        if (data.backends) {
-                            // Update Meshtastic info in System Info card
-                            if (data.backends.meshtastic) {
-                                const mtDisplay = document.getElementById('meshtastic-device-display');
-                                if (mtDisplay) {
-                                    const mt = data.backends.meshtastic;
-                                    let mtInfo = `Meshtastic: ${mt.connected ? 'Connected' : 'Disconnected'}`;
-                                    if (mt.device_name) mtInfo += ` (${mt.device_name})`;
-                                    if (mt.local_node_id) mtInfo += ` [${mt.local_node_id}]`;
-                                    mtDisplay.textContent = mtInfo;
-                                }
-                            }
-                            // Update MeshCore info in System Info card
-                            if (data.backends.meshcore) {
-                                const mcDisplay = document.getElementById('meshcore-device-display');
-                                if (mcDisplay) {
-                                    const mc = data.backends.meshcore;
-                                    let mcInfo = `MeshCore: ${mc.connected ? 'Connected' : 'Disconnected'}`;
-                                    if (mc.device_name) mcInfo += ` (${mc.device_name})`;
-                                    if (mc.local_node_id) mcInfo += ` [${mc.local_node_id}]`;
-                                    mcDisplay.textContent = mcInfo;
-                                }
-                            }
+
+                        // v3.2.0: render one line per connected device
+                        const devicesDisplay = document.getElementById('devices-display');
+                        if (devicesDisplay && entries.length > 0) {
+                            let html = '';
+                            entries.forEach(info => {
+                                const typeName = (info.type || 'unknown');
+                                const label = typeName.charAt(0).toUpperCase() + typeName.slice(1);
+                                let line = `${label}: ${info.connected ? 'Connected' : 'Disconnected'}`;
+                                if (info.device_name) line += ` (${info.device_name})`;
+                                if (info.local_node_id) line += ` [${info.local_node_id}]`;
+                                html += `<div>${line}</div>`;
+                            });
+                            devicesDisplay.innerHTML = html;
                         }
                     }
                 })
                 .catch(error => {
                     console.error('Error fetching status:', error);
                 });
+        }
+
+        // v3.2.0: dynamically populate backend filter from status
+        let _lastFilterOptions = '';
+        function updateBackendFilterDropdown(entries) {
+            const select = document.getElementById('backend-filter');
+            if (!select) return;
+            // Build option set: type groups + individual devices if >1 of same type
+            const types = new Set();
+            const typeCounts = {};
+            entries.forEach(e => {
+                const t = e.type || 'unknown';
+                types.add(t);
+                typeCounts[t] = (typeCounts[t] || 0) + 1;
+            });
+            let optionsKey = Array.from(types).sort().join(',') + ':' + entries.map(e => e.device_id || '').join(',');
+            if (optionsKey === _lastFilterOptions) return; // no change
+            _lastFilterOptions = optionsKey;
+            const currentValue = select.value;
+            let html = '<option value="">All Backends</option>';
+            types.forEach(t => {
+                const label = t.charAt(0).toUpperCase() + t.slice(1);
+                html += `<option value="${t}">${label}</option>`;
+            });
+            // Add individual device entries if multiple of same type
+            entries.forEach(e => {
+                if (typeCounts[e.type] > 1 && e.device_id) {
+                    const label = e.device_name
+                        ? `${e.type}: ${e.device_name}`
+                        : `${e.type}: ${e.device_id}`;
+                    html += `<option value="${e.device_id}">${label}</option>`;
+                }
+            });
+            select.innerHTML = html;
+            select.value = currentValue; // preserve selection
         }
 
         function saveSettings() {

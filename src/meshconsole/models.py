@@ -77,6 +77,7 @@ class UnifiedPacket:
     uptime_hours: Optional[int] = None
     uptime_minutes: Optional[int] = None
     raw_packet: dict = field(default_factory=dict)
+    device_id: str = ""
 
     def to_dict(self) -> dict:
         """Convert to a JSON-serializable dictionary."""

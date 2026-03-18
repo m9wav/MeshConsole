@@ -272,12 +272,16 @@ def create_app(orchestrator):
                 except Exception:
                     continue
 
-            # Also pull live MeshCore nodes from backend contacts cache
+            # Also pull live nodes from ALL backend contacts caches
             # (they may not have NODEINFO packets in DB yet)
-            if not backend_filter or backend_filter == 'meshcore':
-                mc_backend = getattr(orchestrator, '_meshcore_backend', None)
-                if mc_backend and mc_backend.is_connected:
-                    live_nodes = mc_backend.get_nodes()
+            all_backends = getattr(orchestrator, 'backends', [])
+            for b in all_backends:
+                if backend_filter and b.backend_type.value != backend_filter:
+                    continue
+                if not b.is_connected:
+                    continue
+                try:
+                    live_nodes = b.get_nodes()
                     for node_id, unified_node in live_nodes.items():
                         if node_id not in nodes_by_id:
                             nodes_by_id[node_id] = {
@@ -286,13 +290,16 @@ def create_app(orchestrator):
                                 'shortName': unified_node.short_name or '',
                                 'hwModel': '',
                                 'lastSeen': unified_node.last_seen or '',
-                                'backend': 'meshcore',
+                                'backend': b.backend_type.value,
+                                'device_id': b.device_id,
                             }
                         else:
                             # Update name from live cache if the DB one is just the raw ID
                             existing = nodes_by_id[node_id]
                             if existing['longName'] in (node_id, '', None) and unified_node.display_name:
                                 existing['longName'] = unified_node.display_name
+                except Exception as e:
+                    logger.debug(f"Error fetching nodes from {b.backend_type.value}: {e}")
 
             # Filter out invalid/ghost nodes and the local node
             local_id = orchestrator.local_node_id
@@ -323,11 +330,12 @@ def create_app(orchestrator):
             data = request.get_json()
             destination = data.get('destination')
             message = data.get('message')
+            device_id = data.get('device_id')  # v3.2.0: optional routing
 
             if not destination or not message:
                 return jsonify({'success': False, 'error': 'Missing destination or message'}), 400
 
-            orchestrator.send_message(destination, message)
+            orchestrator.send_message(destination, message, device_id=device_id)
             return jsonify({'success': True, 'message': 'Message sent successfully'})
         except Exception as e:
             logger.error(f"Error sending message via API: {e}")
@@ -406,12 +414,11 @@ def create_app(orchestrator):
                 'local_node_id': orchestrator.local_node_id,
             }
 
-            # Per-backend status (if orchestrator supports it)
+            # Per-backend status
             if hasattr(orchestrator, 'get_backend_status'):
                 response['backends'] = orchestrator.get_backend_status()
                 response['backend_mode'] = getattr(orchestrator, 'backend_mode', 'meshtastic')
             else:
-                # Single-backend fallback: report current backend info
                 response['backends'] = {
                     'meshtastic': {
                         'connected': connected,
@@ -419,6 +426,10 @@ def create_app(orchestrator):
                     }
                 }
                 response['backend_mode'] = 'meshtastic'
+
+            # v3.2.0: also include flat list for multi-device UI
+            if hasattr(orchestrator, 'get_backend_status_list'):
+                response['backends_list'] = orchestrator.get_backend_status_list()
 
             return jsonify(response)
         except Exception as e:

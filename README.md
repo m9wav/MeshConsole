@@ -7,24 +7,28 @@
 </p>
 
 <p align="center">
-  <a href="https://pypi.org/project/meshconsole/"><img src="https://img.shields.io/pypi/v/meshconsole?v=3.1.0" alt="PyPI"></a>
+  <a href="https://pypi.org/project/meshconsole/"><img src="https://img.shields.io/pypi/v/meshconsole?v=3.2.0" alt="PyPI"></a>
   <a href="https://m9wav.uk/">m9wav.uk</a>
 </p>
 
 ---
 
-## What's New in v3.1.0
+## What's New in v3.2.0
 
-- **Plug and play** -- `meshconsole listen --usb --web` now auto-detects all connected devices (Meshtastic and MeshCore) and connects to them automatically. No config needed.
-- **Install only what you need** -- backends are now fully optional. Install just `meshconsole[meshtastic]`, just `meshconsole[meshcore]`, or `meshconsole[all]` for both. Neither community is a second-class citizen.
-- **Auto backend mode** -- `--backend auto` scans serial ports, identifies device types, and sets single or dual mode based on what's found.
+- **Multi-device support** -- connect unlimited devices simultaneously. Run 2 Meshtastic + 1 MeshCore, 3 MeshCore devices, or any combination. No more one-per-type limit.
+- **`--device` flag** -- specify multiple devices on the CLI: `--device meshtastic:usb:/dev/ttyACM0 --device meshcore:usb:/dev/ttyUSB0`
+- **Multi-device config** -- new `[Device.0]`, `[Device.1]`, etc. INI sections for persistent multi-device setups
+- **Per-device identity** -- each device gets a unique ID (e.g. `meshtastic:!fa9dc488`), shown in status bar, filters, and system info
+- **Dynamic backend filter** -- web UI filter dropdown auto-populates from connected devices
+
+### v3.1.0
+
+- Plug and play USB auto-detection, flexible optional dependencies
 
 ### v3.0.0
 
 - MeshCore backend support (BLE, serial, TCP)
-- Dual-device mode -- monitor Meshtastic and MeshCore simultaneously
-- Modular architecture, backend badges/filters, 70-test suite
-- Automatic database migration from v2.x
+- Dual-device mode, modular architecture, 70-test suite
 
 ---
 
@@ -99,6 +103,9 @@ meshconsole listen --backend meshcore --mc-ble "AA:BB:CC:DD:EE:FF" --web
 
 # Dual mode (explicit)
 meshconsole listen --backend dual --usb --mc-serial /dev/ttyUSB0 --web
+
+# Multiple devices (any combination)
+meshconsole listen --device meshtastic:usb:/dev/ttyACM0 --device meshtastic:tcp:192.168.1.100 --device meshcore:usb:/dev/ttyUSB0 --web
 ```
 
 ### Other Commands
@@ -168,7 +175,29 @@ connection_type = usb
 
 No `[Backend]` section needed -- MeshConsole will scan and detect automatically when using USB without explicit ports.
 
-CLI arguments (`--backend`, `--mc-serial`, etc.) always override config file values.
+### Multiple devices (new in v3.2.0)
+
+```ini
+[Devices]
+count = 3
+
+[Device.0]
+type = meshtastic
+connection_type = usb
+serial_port = /dev/ttyACM0
+
+[Device.1]
+type = meshtastic
+connection_type = tcp
+ip = 192.168.1.100
+
+[Device.2]
+type = meshcore
+connection_type = usb
+serial_port = /dev/ttyUSB0
+```
+
+CLI arguments (`--backend`, `--mc-serial`, `--device`, etc.) always override config file values.
 
 ## The web dashboard
 

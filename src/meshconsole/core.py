@@ -5,13 +5,13 @@ MeshConsole Core / Orchestrator
 --------------------------------
 Central orchestrator managing backends, database, and web UI.
 
-This module also preserves the legacy MeshtasticTool class for backward
-compatibility.  The entry point ``meshconsole.core:main`` continues to work
-exactly as before.
+v3.2.0: Multi-device support.  ``self.backends`` is a list of MeshBackend
+instances; legacy ``self._backend`` / ``self._meshcore_backend`` are backward-
+compatible properties that search the list.
 
 Author: M9WAV
 License: MIT
-Version: 3.1.0
+Version: 3.2.0
 """
 
 import argparse
@@ -102,6 +102,8 @@ class MeshtasticTool:
     Meshtastic-specific work to ``MeshtasticBackend`` internally while
     preserving the exact same public API so that existing code (wsgi.py,
     CLI dispatchers, etc.) continues to work unchanged.
+
+    v3.2.0: Uses ``self.backends: list[MeshBackend]`` for multi-device.
     """
 
     def __init__(self, device_ip=None, serial_port=None, connection_type=None,
@@ -159,76 +161,219 @@ class MeshtasticTool:
         self.server_start_time = datetime.now()
         self.connection_start_time = None
 
+        # ── Multi-device backend list (v3.2.0) ──────────────────
+        self.backends: list[MeshBackend] = []
+
         # Determine backend mode (meshtastic, meshcore, or dual)
         self.backend_mode = (
             os.getenv('MESHCONSOLE_BACKEND_MODE')
             or self.config.get('Backend', 'mode', fallback='meshtastic')
         )
 
-        # Create the Meshtastic backend only if needed
-        if self.backend_mode in ('meshtastic', 'dual'):
-            try:
-                from meshconsole.backend.meshtastic import MeshtasticBackend
-                self._backend = MeshtasticBackend(
-                    device_ip=self.device_ip,
-                    serial_port=self.serial_port,
-                    connection_type=self.connection_type,
-                    sender_filter=self.sender_filter,
-                    db_handler=self.db_handler,
-                    verbose=self.verbose,
-                )
-                self._backend.on_packet_received(self._handle_backend_packet)
-            except ImportError:
-                if self.backend_mode == 'meshtastic':
-                    raise MeshtasticToolError(
-                        "meshtastic package required. Install with: pip install meshconsole[meshtastic]"
-                    )
-                logger.warning("Meshtastic unavailable; continuing with MeshCore only.")
-                self._backend = None
+        # Check for multi-device config
+        device_configs = self._get_device_configs()
+
+        if device_configs:
+            # Multi-device config found — create backends from it
+            self._create_backends_from_configs(device_configs)
         else:
-            self._backend = None
+            # Legacy single/dual device init
+            # Create the Meshtastic backend only if needed
+            if self.backend_mode in ('meshtastic', 'dual'):
+                try:
+                    from meshconsole.backend.meshtastic import MeshtasticBackend
+                    backend = MeshtasticBackend(
+                        device_ip=self.device_ip,
+                        serial_port=self.serial_port,
+                        connection_type=self.connection_type,
+                        sender_filter=self.sender_filter,
+                        db_handler=self.db_handler,
+                        verbose=self.verbose,
+                    )
+                    backend.on_packet_received(self._handle_backend_packet)
+                    self.backends.append(backend)
+                except ImportError:
+                    if self.backend_mode == 'meshtastic':
+                        raise MeshtasticToolError(
+                            "meshtastic package required. Install with: pip install meshconsole[meshtastic]"
+                        )
+                    logger.warning("Meshtastic unavailable; continuing with MeshCore only.")
 
-        # MeshCore backend (created lazily on connect if mode requires it)
-        self._meshcore_backend = None
+        logger.info(f"MeshConsole initialized (backend mode: {self.backend_mode}, {len(self.backends)} backend(s)).")
 
-        logger.info(f"MeshConsole initialized (backend mode: {self.backend_mode}).")
+    # ── Multi-device config helpers ──────────────────────────
+
+    def _get_device_configs(self):
+        """Read multi-device configs from environment or [Devices] section.
+
+        Returns a list of dicts, or empty list if no multi-device config.
+        """
+        # Check env var first (set by CLI --device args)
+        env_configs = os.getenv('MESHCONSOLE_DEVICE_CONFIGS', '')
+        if env_configs:
+            try:
+                return json.loads(env_configs)
+            except (json.JSONDecodeError, TypeError):
+                logger.warning("Invalid MESHCONSOLE_DEVICE_CONFIGS env var, ignoring.")
+
+        # Check INI [Devices] section
+        if not self.config.has_section('Devices'):
+            return []
+
+        count = self.config.getint('Devices', 'count', fallback=0)
+        if count == 0:
+            return []
+
+        configs = []
+        for i in range(count):
+            section = f'Device.{i}'
+            if not self.config.has_section(section):
+                continue
+            cfg = {
+                'type': self.config.get(section, 'type', fallback='meshtastic'),
+                'connection_type': self.config.get(section, 'connection_type', fallback='tcp'),
+                'ip': self.config.get(section, 'ip', fallback=''),
+                'serial_port': self.config.get(section, 'serial_port', fallback=''),
+                'ble_address': self.config.get(section, 'ble_address', fallback=''),
+                'ble_pin': self.config.get(section, 'ble_pin', fallback=''),
+                'tcp_host': self.config.get(section, 'tcp_host', fallback=''),
+                'tcp_port': self.config.get(section, 'tcp_port', fallback=''),
+                'device_id': self.config.get(section, 'device_id', fallback=''),
+            }
+            configs.append(cfg)
+
+        return configs
+
+    def _create_backends_from_configs(self, configs):
+        """Create backend instances from multi-device config dicts."""
+        for cfg in configs:
+            btype = cfg['type']
+            conn = cfg['connection_type']
+            did = cfg.get('device_id', '')
+
+            if btype == 'meshtastic':
+                try:
+                    from meshconsole.backend.meshtastic import MeshtasticBackend
+                    ip = cfg.get('ip', '') or self.device_ip
+                    sp = cfg.get('serial_port', '') or None
+                    backend = MeshtasticBackend(
+                        device_ip=ip,
+                        serial_port=sp,
+                        connection_type=conn,
+                        sender_filter=self.sender_filter,
+                        db_handler=self.db_handler,
+                        verbose=self.verbose,
+                        device_id=did,
+                    )
+                    backend.on_packet_received(self._handle_backend_packet)
+                    self.backends.append(backend)
+                except ImportError:
+                    logger.warning("Meshtastic package unavailable, skipping device config.")
+            elif btype == 'meshcore':
+                try:
+                    from meshconsole.backend import create_backend
+                    address = ''
+                    port = None
+                    pin = None
+                    if conn == 'ble':
+                        address = cfg.get('ble_address', '')
+                        pin = cfg.get('ble_pin', '') or None
+                    elif conn == 'usb':
+                        address = cfg.get('serial_port', '')
+                    elif conn == 'tcp':
+                        address = cfg.get('tcp_host', '')
+                        port_str = cfg.get('tcp_port', '')
+                        port = int(port_str) if port_str else 4000
+
+                    backend = create_backend(
+                        BackendType.MESHCORE,
+                        connection_type=conn,
+                        address=address,
+                        port=port,
+                        pin=pin,
+                        verbose=self.verbose,
+                        device_id=did,
+                    )
+                    backend.on_packet_received(self._handle_backend_packet)
+                    self.backends.append(backend)
+                except ImportError:
+                    logger.warning("MeshCore package unavailable, skipping device config.")
+
+    # ── Backward-compat properties: _backend / _meshcore_backend ──
+
+    @property
+    def _backend(self):
+        """Return the first Meshtastic backend, or None."""
+        return next((b for b in self.backends if b.backend_type == BackendType.MESHTASTIC), None)
+
+    @_backend.setter
+    def _backend(self, value):
+        """Replace or remove the first Meshtastic backend (legacy compat)."""
+        # Remove existing meshtastic backends
+        self.backends = [b for b in self.backends if b.backend_type != BackendType.MESHTASTIC]
+        if value is not None:
+            self.backends.insert(0, value)
+
+    @property
+    def _meshcore_backend(self):
+        """Return the first MeshCore backend, or None."""
+        return next((b for b in self.backends if b.backend_type == BackendType.MESHCORE), None)
+
+    @_meshcore_backend.setter
+    def _meshcore_backend(self, value):
+        """Replace or remove the first MeshCore backend (legacy compat)."""
+        self.backends = [b for b in self.backends if b.backend_type != BackendType.MESHCORE]
+        if value is not None:
+            self.backends.append(value)
 
     # ── Proxy properties for backward compat ──────────────────
 
     @property
     def interface(self):
-        return self._backend.interface if self._backend else None
+        mt = self._backend
+        return mt.interface if mt else None
 
     @interface.setter
     def interface(self, value):
-        if self._backend:
-            self._backend.interface = value
+        mt = self._backend
+        if mt:
+            mt.interface = value
 
     @property
     def local_node_id(self):
-        if self._backend:
-            return self._backend.local_node_id
-        if self._meshcore_backend:
-            return self._meshcore_backend.local_node_id
+        for b in self.backends:
+            if b.local_node_id:
+                return b.local_node_id
         return None
 
     @local_node_id.setter
     def local_node_id(self, value):
-        if self._backend:
-            self._backend._local_node_id = value
+        mt = self._backend
+        if mt:
+            mt._local_node_id = value
 
     @property
     def node_name_map(self):
-        return self._backend.node_name_map if self._backend else {}
+        """Merge node_name_map from all Meshtastic backends."""
+        merged = {}
+        for b in self.backends:
+            if b.backend_type == BackendType.MESHTASTIC and hasattr(b, 'node_name_map'):
+                merged.update(b.node_name_map)
+        return merged
 
     @property
     def node_short_name_map(self):
-        return self._backend.node_short_name_map if self._backend else {}
+        """Merge node_short_name_map from all Meshtastic backends."""
+        merged = {}
+        for b in self.backends:
+            if b.backend_type == BackendType.MESHTASTIC and hasattr(b, 'node_short_name_map'):
+                merged.update(b.node_short_name_map)
+        return merged
 
     # ── Packet callback ───────────────────────────────────────
 
     def _handle_backend_packet(self, packet: UnifiedPacket):
-        """Handle packets produced by the backend — log to DB and cache."""
+        """Handle packets produced by the backend -- log to DB and cache."""
         packet_dict = asdict(packet)
         # Ensure backend is stored as string
         if hasattr(packet_dict.get('backend'), 'value'):
@@ -271,30 +416,35 @@ class MeshtasticTool:
     # ── Connection ────────────────────────────────────────────
 
     def _connect_interface(self):
-        """Establish connection to the Meshtastic device via TCP or USB.
+        """Connect all backends in self.backends.
 
-        Also connects MeshCore backend if the backend mode is 'meshcore' or 'dual'.
+        Also connects MeshCore backend if the backend mode is 'meshcore' or 'dual'
+        and no MeshCore backend exists yet.
         """
         # Auto-detect if backend_mode is 'auto'
         if self.backend_mode == 'auto':
             self._auto_detect_and_connect()
             return
 
-        # Connect Meshtastic backend (unless mode is meshcore-only)
-        if self.backend_mode in ('meshtastic', 'dual'):
+        # Connect all existing backends
+        for b in list(self.backends):
+            if b.is_connected:
+                continue
             try:
-                self._backend.connect()
-                self.connection_start_time = datetime.now()
+                b.connect()
+                if not self.connection_start_time:
+                    self.connection_start_time = datetime.now()
+                logger.info(f"Connected backend: {b.backend_type.value} ({b.device_id})")
             except Exception as e:
-                conn_target = (self.serial_port or "auto-detect") if self.connection_type.lower() == 'usb' else self.device_ip
-                logger.error(f"Failed to connect to the Meshtastic device ({self.connection_type}) at {conn_target}: {e}")
-                if self.backend_mode == 'meshtastic':
+                logger.error(f"Failed to connect {b.backend_type.value} backend: {e}")
+                # If this is the only meshtastic backend and mode requires it, raise
+                if b.backend_type == BackendType.MESHTASTIC and self.backend_mode == 'meshtastic':
                     raise MeshtasticToolError("Connection to Meshtastic device failed.")
-                else:
-                    logger.warning("Meshtastic connection failed in dual mode; continuing with MeshCore only.")
+                elif b.backend_type == BackendType.MESHCORE and self.backend_mode == 'meshcore':
+                    raise MeshtasticToolError(f"Connection to MeshCore device failed: {e}")
 
-        # Connect MeshCore backend if mode requires it
-        if self.backend_mode in ('meshcore', 'dual'):
+        # Connect MeshCore backend if mode requires it and not yet in backends
+        if self.backend_mode in ('meshcore', 'dual') and not self._meshcore_backend:
             self._connect_meshcore()
 
     def _connect_meshcore(self):
@@ -344,7 +494,7 @@ class MeshtasticTool:
                 )
 
             from meshconsole.backend import create_backend
-            self._meshcore_backend = create_backend(
+            mc_backend = create_backend(
                 BackendType.MESHCORE,
                 connection_type=mc_conn_type,
                 address=address,
@@ -352,8 +502,9 @@ class MeshtasticTool:
                 pin=pin,
                 verbose=self.verbose,
             )
-            self._meshcore_backend.on_packet_received(self._handle_backend_packet)
-            self._meshcore_backend.connect()
+            mc_backend.on_packet_received(self._handle_backend_packet)
+            mc_backend.connect()
+            self.backends.append(mc_backend)
             logger.info("MeshCore backend connected successfully.")
 
         except ImportError as e:
@@ -366,7 +517,7 @@ class MeshtasticTool:
                 raise MeshtasticToolError(f"Connection to MeshCore device failed: {e}")
 
     def _auto_detect_and_connect(self):
-        """Auto-detect USB devices and connect to them."""
+        """Auto-detect USB devices and connect to ALL of them."""
         from meshconsole.autodetect import auto_detect_devices
 
         devices = auto_detect_devices()
@@ -377,15 +528,17 @@ class MeshtasticTool:
             if device.backend_type == BackendType.MESHTASTIC:
                 try:
                     from meshconsole.backend.meshtastic import MeshtasticBackend
-                    self._backend = MeshtasticBackend(
+                    backend = MeshtasticBackend(
                         serial_port=device.port,
                         connection_type='usb',
                         db_handler=self.db_handler,
                         verbose=self.verbose,
                     )
-                    self._backend.on_packet_received(self._handle_backend_packet)
-                    self._backend.connect()
-                    self.connection_start_time = datetime.now()
+                    backend.on_packet_received(self._handle_backend_packet)
+                    backend.connect()
+                    self.backends.append(backend)
+                    if not self.connection_start_time:
+                        self.connection_start_time = datetime.now()
                     logger.info(f"Auto-connected Meshtastic on {device.port}")
                 except Exception as e:
                     logger.error(f"Failed to connect Meshtastic on {device.port}: {e}")
@@ -393,21 +546,22 @@ class MeshtasticTool:
             elif device.backend_type == BackendType.MESHCORE:
                 try:
                     from meshconsole.backend import create_backend
-                    self._meshcore_backend = create_backend(
+                    mc_backend = create_backend(
                         BackendType.MESHCORE,
                         connection_type='usb',
                         address=device.port,
                         verbose=self.verbose,
                     )
-                    self._meshcore_backend.on_packet_received(self._handle_backend_packet)
-                    self._meshcore_backend.connect()
+                    mc_backend.on_packet_received(self._handle_backend_packet)
+                    mc_backend.connect()
+                    self.backends.append(mc_backend)
                     logger.info(f"Auto-connected MeshCore on {device.port}")
                 except Exception as e:
                     logger.error(f"Failed to connect MeshCore on {device.port}: {e}")
 
         # Update backend mode based on what connected
-        has_mt = self._backend is not None and self._backend.is_connected
-        has_mc = self._meshcore_backend is not None and self._meshcore_backend.is_connected
+        has_mt = any(b.backend_type == BackendType.MESHTASTIC and b.is_connected for b in self.backends)
+        has_mc = any(b.backend_type == BackendType.MESHCORE and b.is_connected for b in self.backends)
         if has_mt and has_mc:
             self.backend_mode = 'dual'
         elif has_mt:
@@ -417,87 +571,146 @@ class MeshtasticTool:
         else:
             raise MeshtasticToolError("Failed to connect to any detected devices.")
 
-        logger.info(f"Auto-detection complete: mode={self.backend_mode}")
+        logger.info(f"Auto-detection complete: mode={self.backend_mode}, {len(self.backends)} device(s)")
 
     def _sync_node_db(self):
-        """Sync node database from the Meshtastic device."""
-        if self._backend:
-            self._backend._sync_node_db()
+        """Sync node database from all Meshtastic backends."""
+        for b in self.backends:
+            if b.backend_type == BackendType.MESHTASTIC and hasattr(b, '_sync_node_db'):
+                b._sync_node_db()
 
     # ── Delegated methods (preserve original signatures) ──────
 
     def _resolve_node_name(self, node_id):
-        # Route MeshCore IDs to MeshCore backend first
-        if node_id and node_id.startswith('mc:') and self._meshcore_backend:
-            name = self._meshcore_backend.resolve_node_name(node_id)
-            if name and name != node_id and name != node_id.removeprefix('mc:'):
-                return name
-        if self._backend:
-            name = self._backend.resolve_node_name(node_id)
-            if name and name != node_id:
-                return name
-        if self._meshcore_backend:
-            return self._meshcore_backend.resolve_node_name(node_id)
+        """Resolve a node ID to a name by checking all backends."""
+        if not node_id:
+            return node_id
+
+        # Route MeshCore IDs to MeshCore backends first
+        if node_id.startswith('mc:'):
+            for b in self.backends:
+                if b.backend_type == BackendType.MESHCORE:
+                    name = b.resolve_node_name(node_id)
+                    if name and name != node_id and name != node_id.removeprefix('mc:'):
+                        return name
+
+        # Try all backends
+        for b in self.backends:
+            try:
+                name = b.resolve_node_name(node_id)
+                if name and name != node_id:
+                    return name
+            except Exception:
+                continue
+
         return node_id
 
     def _get_port_name(self, portnum):
-        if self._backend:
-            return self._backend._get_port_name(portnum)
+        mt = self._backend
+        if mt:
+            return mt._get_port_name(portnum)
         return str(portnum)
 
     def _json_serializer(self, obj):
-        if self._backend:
-            return self._backend._json_serializer(obj)
+        mt = self._backend
+        if mt:
+            return mt._json_serializer(obj)
         return str(obj)
 
     def on_connection(self, interface, topic=None):
-        if self._backend:
-            self._backend._on_connection(interface, topic)
+        mt = self._backend
+        if mt:
+            mt._on_connection(interface, topic)
 
     def on_receive(self, packet, interface):
-        if self._backend:
-            self._backend._on_receive(packet, interface)
+        mt = self._backend
+        if mt:
+            mt._on_receive(packet, interface)
 
     def process_packet(self, packet):
-        if self._backend:
-            self._backend._process_packet(packet)
+        mt = self._backend
+        if mt:
+            mt._process_packet(packet)
 
-    def send_message(self, destination_id, message):
-        if destination_id.startswith('mc:') and self._meshcore_backend:
-            self._meshcore_backend.send_message(destination_id, message)
-        elif self._backend:
-            self._backend.send_message(destination_id, message)
-        elif self._meshcore_backend:
-            self._meshcore_backend.send_message(destination_id, message)
+    def send_message(self, destination_id, message, device_id=None):
+        """Send a message, optionally routing to a specific device.
+
+        Args:
+            destination_id: The target node ID.
+            message: The text message to send.
+            device_id: If specified, route to the backend with this device_id.
+        """
+        # Route by device_id if specified
+        if device_id:
+            for b in self.backends:
+                if b.device_id == device_id:
+                    b.send_message(destination_id, message)
+                    return
+            logger.warning(f"No backend found with device_id={device_id}")
+
+        # Route by node ID prefix
+        if destination_id.startswith('mc:'):
+            for b in self.backends:
+                if b.backend_type == BackendType.MESHCORE:
+                    b.send_message(destination_id, message)
+                    return
+        else:
+            for b in self.backends:
+                if b.backend_type == BackendType.MESHTASTIC:
+                    b.send_message(destination_id, message)
+                    return
+
+        # Fallback: send via any connected backend
+        for b in self.backends:
+            if b.is_connected:
+                b.send_message(destination_id, message)
+                return
 
     def send_traceroute(self, destination_id, hop_limit=10):
-        if destination_id.startswith('mc:') and self._meshcore_backend:
-            self._meshcore_backend.send_traceroute(destination_id, hop_limit)
-        elif self._backend:
-            self._backend.send_traceroute(destination_id, hop_limit)
-        elif self._meshcore_backend:
-            self._meshcore_backend.send_traceroute(destination_id, hop_limit)
+        """Route traceroute to the appropriate backend."""
+        if destination_id.startswith('mc:'):
+            for b in self.backends:
+                if b.backend_type == BackendType.MESHCORE:
+                    b.send_traceroute(destination_id, hop_limit)
+                    return
+        else:
+            for b in self.backends:
+                if b.backend_type == BackendType.MESHTASTIC:
+                    b.send_traceroute(destination_id, hop_limit)
+                    return
+
+        # Fallback: any connected backend
+        for b in self.backends:
+            if b.is_connected:
+                b.send_traceroute(destination_id, hop_limit)
+                return
 
     def _format_node_id(self, node_num):
-        if self._backend:
-            return self._backend._format_node_id(node_num)
+        mt = self._backend
+        if mt:
+            return mt._format_node_id(node_num)
         return str(node_num)
 
     def _get_node_id(self, packet, field='from'):
-        if self._backend:
-            return self._backend._get_node_id(packet, field)
+        mt = self._backend
+        if mt:
+            return mt._get_node_id(packet, field)
         return str(packet.get(field, ''))
 
     def _update_node_from_packet(self, packet):
-        if self._backend:
-            self._backend._update_node_from_packet(packet)
+        mt = self._backend
+        if mt:
+            mt._update_node_from_packet(packet)
 
     def _process_traceroute_response(self, packet):
-        if self._backend:
-            self._backend._process_traceroute_response(packet)
+        mt = self._backend
+        if mt:
+            mt._process_traceroute_response(packet)
 
     def _print_message_summary(self, packet):
-        self._backend._print_message_summary(packet)
+        mt = self._backend
+        if mt:
+            mt._print_message_summary(packet)
 
     # ── Listening / reconnection ──────────────────────────────
 
@@ -530,47 +743,47 @@ class MeshtasticTool:
                     time.sleep(1)
                     current_time = time.time()
 
-                    # ── Meshtastic health check (skip if meshcore-only) ──
-                    if self.backend_mode in ('meshtastic', 'dual'):
-                        if not self.interface:
-                            raise ConnectionError("Meshtastic interface is None")
+                    # ── Health check each backend independently ──
+                    failed_backends = []
+                    for b in list(self.backends):
+                        if b.backend_type == BackendType.MESHTASTIC:
+                            iface = getattr(b, 'interface', None)
+                            if not iface:
+                                failed_backends.append(b)
+                                continue
 
-                        connection_healthy = True
+                            healthy = True
+                            if hasattr(iface, 'isConnected') and not iface.isConnected:
+                                healthy = False
 
-                        if hasattr(self.interface, 'isConnected'):
-                            if not self.interface.isConnected:
-                                connection_healthy = False
-                                logger.warning("Meshtastic interface reports disconnected")
+                            if hasattr(iface, 'socket') and iface.socket:
+                                try:
+                                    error = iface.socket.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR)
+                                    if error != 0:
+                                        healthy = False
+                                except Exception:
+                                    healthy = False
 
-                        if hasattr(self.interface, 'socket') and self.interface.socket:
-                            try:
-                                error = self.interface.socket.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR)
-                                if error != 0:
-                                    connection_healthy = False
-                                    logger.warning(f"Socket error detected: {error}")
-                            except Exception as e:
-                                connection_healthy = False
-                                logger.warning(f"Socket check failed: {e}")
-
-                        if current_time - last_packet_time > connection_timeout:
                             if current_time - last_packet_time > connection_timeout * 2:
-                                connection_healthy = False
-                                logger.warning(f"No packets received for {current_time - last_packet_time:.1f} seconds")
+                                healthy = False
 
-                        try:
-                            if hasattr(self.interface, 'nodes'):
-                                _ = len(self.interface.nodes)
-                        except Exception as e:
-                            connection_healthy = False
-                            logger.warning(f"Meshtastic interface operation failed: {e}")
+                            try:
+                                if hasattr(iface, 'nodes'):
+                                    _ = len(iface.nodes)
+                            except Exception:
+                                healthy = False
 
-                        if not connection_healthy:
-                            raise ConnectionError("Meshtastic interface health check failed")
+                            if not healthy:
+                                failed_backends.append(b)
 
-                    # ── MeshCore health check (meshcore-only mode) ──
-                    if self.backend_mode == 'meshcore':
-                        if self._meshcore_backend and not self._meshcore_backend.is_connected:
-                            raise ConnectionError("MeshCore backend disconnected")
+                        elif b.backend_type == BackendType.MESHCORE:
+                            if not b.is_connected:
+                                failed_backends.append(b)
+
+                    if failed_backends:
+                        raise ConnectionError(
+                            f"{len(failed_backends)} backend(s) failed health check"
+                        )
 
                     # ── Track packet activity ──
                     with self.latest_packets_lock:
@@ -587,29 +800,13 @@ class MeshtasticTool:
             except (ConnectionError, BrokenPipeError, OSError, socket.error, Exception) as e:
                 logger.error(f"Connection lost: {e}")
 
-                # ── Meshtastic cleanup ──
-                if self.backend_mode in ('meshtastic', 'dual'):
-                    try:
-                        if self.interface:
-                            if hasattr(self.interface, 'close'):
-                                self.interface.close()
-                            if hasattr(self.interface, 'socket') and self.interface.socket:
-                                try:
-                                    self.interface.socket.shutdown(socket.SHUT_RDWR)
-                                    self.interface.socket.close()
-                                except Exception:
-                                    pass
-                    except Exception as cleanup_error:
-                        logger.debug(f"Error during interface cleanup: {cleanup_error}")
-                    self.interface = None
-
-                # ── MeshCore cleanup ──
-                if self.backend_mode in ('meshcore', 'dual') and self._meshcore_backend:
-                    try:
-                        self._meshcore_backend.disconnect()
-                    except Exception:
-                        pass
-                    self._meshcore_backend = None
+                # ── Cleanup failed backends ──
+                for b in list(self.backends):
+                    if not b.is_connected or (b.backend_type == BackendType.MESHTASTIC and not getattr(b, 'interface', None)):
+                        try:
+                            b.disconnect()
+                        except Exception:
+                            pass
 
                 time.sleep(2)
 
@@ -617,13 +814,12 @@ class MeshtasticTool:
                 time.sleep(retry_delay)
 
                 try:
-                    logger.info("Creating new interface connection...")
+                    logger.info("Reconnecting backends...")
                     self._connect_interface()
-                    if self.backend_mode in ('meshtastic', 'dual'):
-                        self._sync_node_db()
+                    self._sync_node_db()
                     retry_delay = 1
                     last_packet_time = time.time()
-                    logger.info("Successfully reconnected to the device.")
+                    logger.info("Successfully reconnected.")
                 except Exception as reconnect_error:
                     logger.error(f"Reconnection attempt failed: {reconnect_error}")
                     retry_delay = min(retry_delay * 2, max_retry_delay)
@@ -666,6 +862,7 @@ class MeshtasticTool:
                             'uptime_minutes': None,
                             'raw_packet': json.loads(packet_row[5]),
                             'backend': packet_row[6] if len(packet_row) > 6 else 'meshtastic',
+                            'device_id': packet_row[7] if len(packet_row) > 7 else '',
                         }
 
                         raw_packet = packet_data['raw_packet']
@@ -750,58 +947,93 @@ class MeshtasticTool:
 
     @property
     def is_connected(self):
-        if self._backend:
-            return self._backend.is_connected
-        if self._meshcore_backend:
-            return self._meshcore_backend.is_connected
-        return False
+        return any(b.is_connected for b in self.backends)
 
     def get_backend_status(self):
-        """Return per-backend connection status."""
-        status = {}
-        if self._backend:
-            mt_status = {
-                'connected': self._backend.is_connected,
-                'local_node_id': self._backend.local_node_id,
+        """Return per-backend connection status as a list (v3.2.0).
+
+        Also returns a dict for backward compatibility with existing web UI code
+        that accesses data.backends.meshtastic / data.backends.meshcore.
+        """
+        status_list = []
+        status_dict = {}
+
+        for b in self.backends:
+            entry = {
+                'device_id': b.device_id,
+                'type': b.backend_type.value,
+                'connected': b.is_connected,
+                'local_node_id': b.local_node_id,
             }
-            # Include device name from node DB
-            if self._backend.local_node_id and self._backend.node_name_map:
-                device_name = self._backend.node_name_map.get(self._backend.local_node_id)
+            # Include device name
+            if b.backend_type == BackendType.MESHTASTIC:
+                if hasattr(b, 'node_name_map') and b.local_node_id and b.node_name_map:
+                    device_name = b.node_name_map.get(b.local_node_id)
+                    if device_name:
+                        entry['device_name'] = device_name
+            elif b.backend_type == BackendType.MESHCORE:
+                device_name = getattr(b, '_device_name', None)
                 if device_name:
-                    mt_status['device_name'] = device_name
-            status['meshtastic'] = mt_status
-        if self._meshcore_backend:
-            mc_status = {
-                'connected': self._meshcore_backend.is_connected,
-                'local_node_id': self._meshcore_backend.local_node_id,
+                    entry['device_name'] = device_name
+
+            status_list.append(entry)
+
+            # Also populate the legacy dict (keyed by type)
+            # If multiple of same type, use device_id as key
+            type_key = b.backend_type.value
+            if type_key in status_dict:
+                # Multiple devices of same type — use device_id as key
+                status_dict[b.device_id] = entry
+            else:
+                status_dict[type_key] = entry
+
+        return status_dict
+
+    def get_backend_status_list(self):
+        """Return per-backend connection status as a flat list."""
+        status_list = []
+        for b in self.backends:
+            entry = {
+                'device_id': b.device_id,
+                'type': b.backend_type.value,
+                'connected': b.is_connected,
+                'local_node_id': b.local_node_id,
             }
-            # Include device name if available
-            device_name = getattr(self._meshcore_backend, '_device_name', None)
-            if device_name:
-                mc_status['device_name'] = device_name
-            status['meshcore'] = mc_status
-        return status
+            if b.backend_type == BackendType.MESHTASTIC:
+                if hasattr(b, 'node_name_map') and b.local_node_id and b.node_name_map:
+                    device_name = b.node_name_map.get(b.local_node_id)
+                    if device_name:
+                        entry['device_name'] = device_name
+            elif b.backend_type == BackendType.MESHCORE:
+                device_name = getattr(b, '_device_name', None)
+                if device_name:
+                    entry['device_name'] = device_name
+            status_list.append(entry)
+        return status_list
 
     def clear_traceroute_results(self):
-        # Clear orchestrator-level traceroute state (used by MeshCore)
+        # Clear orchestrator-level traceroute state
         with self.traceroute_results_lock:
             self.traceroute_results = {}
         self.traceroute_completed = False
-        # Also clear Meshtastic backend state if available
-        if self._backend:
-            with self._backend.traceroute_results_lock:
-                self._backend.traceroute_results = {}
-            self._backend.traceroute_completed = False
+        # Also clear per-backend traceroute state
+        for b in self.backends:
+            if hasattr(b, 'traceroute_results_lock'):
+                with b.traceroute_results_lock:
+                    b.traceroute_results = {}
+                b.traceroute_completed = False
 
     def get_traceroute_results(self):
         # Check orchestrator-level results first (MeshCore)
         with self.traceroute_results_lock:
             if self.traceroute_results:
                 return dict(self.traceroute_results)
-        # Fall back to Meshtastic backend results
-        if self._backend:
-            with self._backend.traceroute_results_lock:
-                return dict(self._backend.traceroute_results) if self._backend.traceroute_results else {}
+        # Fall back to per-backend results
+        for b in self.backends:
+            if hasattr(b, 'traceroute_results_lock'):
+                with b.traceroute_results_lock:
+                    if b.traceroute_results:
+                        return dict(b.traceroute_results)
         return {}
 
     # ── CLI commands ──────────────────────────────────────────
@@ -861,20 +1093,15 @@ class MeshtasticTool:
             self.db_handler.close()
         except Exception as e:
             logger.error(f"Error during cleanup: {e}")
-        try:
-            if self._backend:
-                self._backend.disconnect()
-        except Exception as e:
-            logger.error(f"Error closing Meshtastic interface: {e}")
-        try:
-            if self._meshcore_backend:
-                self._meshcore_backend.disconnect()
-        except Exception as e:
-            logger.error(f"Error closing MeshCore interface: {e}")
+        for b in list(self.backends):
+            try:
+                b.disconnect()
+            except Exception as e:
+                logger.error(f"Error closing {b.backend_type.value} interface: {e}")
 
 
 # ══════════════════════════════════════════════════════════════════
-# MeshConsole — new-style orchestrator (aliased for convenience)
+# MeshConsole -- new-style orchestrator (aliased for convenience)
 # ══════════════════════════════════════════════════════════════════
 
 MeshConsole = MeshtasticTool  # Will diverge in future phases
@@ -923,7 +1150,7 @@ def configure_logging(config_file=DEFAULT_CONFIG_FILE):
 # ══════════════════════════════════════════════════════════════════
 
 def main():
-    """Main function — delegates to the CLI module's parser and dispatch."""
+    """Main function -- delegates to the CLI module's parser and dispatch."""
     from meshconsole.cli import cli_main
     cli_main()
 

@@ -1,5 +1,40 @@
 # Changelog
 
+## v3.2.0 (2026-03-18)
+
+Multi-device support -- connect unlimited devices of any backend type simultaneously.
+
+### New Features
+
+- **Multi-device architecture** -- replaced the fixed one-Meshtastic + one-MeshCore slot design with a `backends: list[MeshBackend]` that supports any number of devices. Run 2 Meshtastic + 1 MeshCore, 3 MeshCore, or any combination.
+
+- **`--device` CLI flag** -- repeatable argument for specifying multiple devices:
+  ```
+  meshconsole listen --device meshtastic:usb:/dev/ttyACM0 --device meshcore:usb:/dev/ttyUSB0 --web
+  ```
+
+- **Multi-device config format** -- new `[Devices]` section with numbered `[Device.N]` entries. Legacy `[Device]` + `[MeshCore]` format still works.
+
+- **Per-device identity** -- each backend instance gets a unique `device_id` (e.g. `meshtastic:!fa9dc488`, `meshcore:mc:293f0e7dc6da`). Shown in status bar, system info, and stored on packets.
+
+- **Dynamic backend filter** -- web UI filter dropdown auto-populates from connected devices with per-type groups and individual device entries.
+
+- **pypubsub multi-instance fix** -- multiple MeshtasticBackend instances no longer cross-talk. Each instance only processes packets from its own interface.
+
+- **Per-device health checks** -- reconnection logic works independently per backend. One device disconnecting doesn't disrupt others.
+
+### Changes
+
+- `self._backend` / `self._meshcore_backend` replaced with `self.backends` list (backward-compat properties preserved)
+- Auto-detection now finds ALL devices, not just first of each type
+- `/status` API returns `backends_list` array alongside legacy `backends` dict
+- Database: new `device_id` column on packets/messages tables (auto-migrated)
+- `send_message` routes by node ID prefix (`mc:` → MeshCore, `!` → Meshtastic)
+- `MeshtasticBackend.connect()` now subscribes to pypubsub (moved from `__init__`)
+- `MeshtasticBackend.disconnect()` now unsubscribes from pypubsub
+
+---
+
 ## v3.1.0 (2026-03-18)
 
 USB auto-detection and flexible dependency installation.

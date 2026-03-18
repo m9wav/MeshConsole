@@ -207,3 +207,71 @@ class MeshConsoleConfig:
     def verbose(self) -> bool:
         """Verbose mode (typically set via CLI, not config)."""
         return False
+
+    # ── Multi-device configuration (v3.2.0) ──────────────────────
+
+    def get_device_configs(self) -> list[dict]:
+        """Return a list of device configuration dicts.
+
+        If the config file has a ``[Devices]`` section with ``count = N``,
+        reads ``[Device.0]`` through ``[Device.N-1]``.
+
+        Otherwise, builds a list from the legacy ``[Device]`` + ``[MeshCore]``
+        sections so existing single-device configs continue to work.
+        """
+        # New-style: [Devices] section with count
+        if self._parser.has_section('Devices'):
+            count = self._parser.getint('Devices', 'count', fallback=0)
+            if count > 0:
+                configs = []
+                for i in range(count):
+                    section = f'Device.{i}'
+                    if not self._parser.has_section(section):
+                        continue
+                    cfg = {
+                        'type': self._parser.get(section, 'type', fallback='meshtastic'),
+                        'connection_type': self._parser.get(section, 'connection_type', fallback='tcp'),
+                        'ip': self._parser.get(section, 'ip', fallback=''),
+                        'serial_port': self._parser.get(section, 'serial_port', fallback=''),
+                        'ble_address': self._parser.get(section, 'ble_address', fallback=''),
+                        'ble_pin': self._parser.get(section, 'ble_pin', fallback=''),
+                        'tcp_host': self._parser.get(section, 'tcp_host', fallback=''),
+                        'tcp_port': self._parser.get(section, 'tcp_port', fallback=''),
+                        'device_id': self._parser.get(section, 'device_id', fallback=''),
+                    }
+                    configs.append(cfg)
+                return configs
+
+        # Legacy: build from [Device] and optionally [MeshCore]
+        configs = []
+        mode = self.backend_mode
+
+        if mode in ('meshtastic', 'dual'):
+            configs.append({
+                'type': 'meshtastic',
+                'connection_type': self.connection_type,
+                'ip': self.device_ip,
+                'serial_port': self.serial_port or '',
+                'ble_address': '',
+                'ble_pin': '',
+                'tcp_host': '',
+                'tcp_port': '',
+                'device_id': '',
+            })
+
+        if mode in ('meshcore', 'dual'):
+            mc_conn = self.meshcore_connection_type
+            cfg = {
+                'type': 'meshcore',
+                'connection_type': mc_conn,
+                'ip': '',
+                'serial_port': self.meshcore_serial_port or '',
+                'ble_address': self.meshcore_ble_address or '',
+                'ble_pin': self.meshcore_ble_pin or '',
+                'tcp_host': self.meshcore_tcp_host or '',
+                'tcp_port': str(self.meshcore_tcp_port) if self.meshcore_tcp_port else '',
+                'device_id': '',
+            }
+            configs.append(cfg)
+
+        return configs

@@ -26,6 +26,7 @@ class DatabaseHandler:
         self.lock = threading.Lock()
         self._setup_database()
         self._migrate_backend_column()
+        self._migrate_device_id_column()
 
     def _setup_database(self):
         """Set up SQLite database for message and packet logging."""
@@ -91,13 +92,36 @@ class DatabaseHandler:
         except sqlite3.Error as e:
             logger.error(f"Database migration error: {e}")
 
-    def log_message(self, timestamp, from_id, to_id, port_name, message, backend='meshtastic'):
+    def _migrate_device_id_column(self):
+        """Add device_id column to tables if missing (v3.2.0 migration)."""
+        try:
+            # Check if device_id column exists in packets table
+            self.cursor.execute("PRAGMA table_info(packets)")
+            columns = [row[1] for row in self.cursor.fetchall()]
+            if 'device_id' not in columns:
+                logger.info("Migrating database: adding device_id column to packets table")
+                self.cursor.execute("ALTER TABLE packets ADD COLUMN device_id TEXT DEFAULT ''")
+                self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_packets_device_id ON packets(device_id)')
+                self.conn.commit()
+
+            # Check if device_id column exists in messages table
+            self.cursor.execute("PRAGMA table_info(messages)")
+            columns = [row[1] for row in self.cursor.fetchall()]
+            if 'device_id' not in columns:
+                logger.info("Migrating database: adding device_id column to messages table")
+                self.cursor.execute("ALTER TABLE messages ADD COLUMN device_id TEXT DEFAULT ''")
+                self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_messages_device_id ON messages(device_id)')
+                self.conn.commit()
+        except sqlite3.Error as e:
+            logger.error(f"Database device_id migration error: {e}")
+
+    def log_message(self, timestamp, from_id, to_id, port_name, message, backend='meshtastic', device_id=''):
         """Log the message to the SQLite database."""
         with self.lock:
             try:
                 self.cursor.execute(
-                    'INSERT INTO messages VALUES (?, ?, ?, ?, ?, ?)',
-                    (timestamp, from_id, to_id, port_name, message, backend)
+                    'INSERT INTO messages VALUES (?, ?, ?, ?, ?, ?, ?)',
+                    (timestamp, from_id, to_id, port_name, message, backend, device_id)
                 )
                 self.conn.commit()
                 logger.debug("Message logged to database.")
@@ -125,8 +149,10 @@ class DatabaseHandler:
                 if hasattr(backend, 'value'):
                     backend = backend.value
 
+                device_id = d.get('device_id', '')
+
                 self.cursor.execute(
-                    'INSERT INTO packets VALUES (?, ?, ?, ?, ?, ?, ?)',
+                    'INSERT INTO packets VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
                     (
                         d['timestamp'],
                         d['from_id'],
@@ -134,7 +160,8 @@ class DatabaseHandler:
                         d['port_name'],
                         d.get('payload', ''),
                         json.dumps(d.get('raw_packet', {})),
-                        backend
+                        backend,
+                        device_id,
                     )
                 )
                 self.conn.commit()
