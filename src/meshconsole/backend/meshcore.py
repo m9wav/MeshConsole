@@ -49,12 +49,17 @@ class MeshCoreBackend(MeshBackend):
         port: int | None = None,
         pin: str | None = None,
         verbose: bool = False,
+        device_id: str = "",
     ):
+        super().__init__()
         if not MESHCORE_AVAILABLE:
             raise ImportError(
                 "meshcore is required for MeshCore support. "
                 "Install it with: pip install meshconsole[meshcore]"
             )
+
+        if device_id:
+            self._device_id = device_id
 
         # Connection settings
         self._connection_type = ConnectionType(connection_type)

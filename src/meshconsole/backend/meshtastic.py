@@ -53,12 +53,17 @@ class MeshtasticBackend(MeshBackend):
         sender_filter: str | None = None,
         db_handler=None,
         verbose: bool = False,
+        device_id: str = "",
     ):
+        super().__init__()
         if not MESHTASTIC_AVAILABLE:
             raise ImportError(
                 "meshtastic is required for Meshtastic support. "
                 "Install it with: pip install meshconsole[meshtastic]"
             )
+
+        if device_id:
+            self._device_id = device_id
 
         self._device_ip = device_ip
         self._serial_port = serial_port
@@ -87,9 +92,9 @@ class MeshtasticBackend(MeshBackend):
         self._connection_callback: Callable | None = None
         self._disconnection_callback: Callable | None = None
 
-        # Subscribe to Meshtastic events
-        pub.subscribe(self._on_receive, 'meshtastic.receive')
-        pub.subscribe(self._on_connection, 'meshtastic.connection.established')
+        # pubsub subscriptions are deferred to connect() so that multiple
+        # MeshtasticBackend instances don't cross-fire events.
+        self._subscribed = False
         logger.info("MeshtasticBackend initialized.")
 
     # ── MeshBackend interface ─────────────────────────────────────
@@ -119,6 +124,13 @@ class MeshtasticBackend(MeshBackend):
     def connect(self) -> None:
         """Establish connection to the Meshtastic device via TCP or USB."""
         try:
+            # Subscribe to pypubsub events before connecting so we capture
+            # the initial connection established event.
+            if not self._subscribed:
+                pub.subscribe(self._on_receive, 'meshtastic.receive')
+                pub.subscribe(self._on_connection, 'meshtastic.connection.established')
+                self._subscribed = True
+
             if self._connection_type.lower() == 'usb':
                 if self._serial_port:
                     logger.info(f"Connecting via USB to {self._serial_port}...")
@@ -144,6 +156,14 @@ class MeshtasticBackend(MeshBackend):
 
     def disconnect(self) -> None:
         """Cleanly disconnect from the device."""
+        # Unsubscribe from pypubsub to prevent stale callbacks
+        if self._subscribed:
+            try:
+                pub.unsubscribe(self._on_receive, 'meshtastic.receive')
+                pub.unsubscribe(self._on_connection, 'meshtastic.connection.established')
+            except Exception:
+                pass
+            self._subscribed = False
         try:
             if self._interface:
                 if hasattr(self._interface, 'close'):
@@ -231,6 +251,9 @@ class MeshtasticBackend(MeshBackend):
 
     def _on_connection(self, interface, topic=None):
         """Handle connection establishment."""
+        # Guard: only process events for our own interface instance
+        if interface is not self._interface:
+            return
         if self._connection_type.lower() == 'usb':
             conn_info = self._serial_port or "auto-detected USB"
         else:
@@ -239,6 +262,9 @@ class MeshtasticBackend(MeshBackend):
 
     def _on_receive(self, packet, interface):
         """Callback function to handle received packets from pypubsub."""
+        # Guard: only process events for our own interface instance
+        if interface is not self._interface:
+            return
         from_id = self._get_node_id(packet, 'from')
         to_id = self._get_node_id(packet, 'to')
 

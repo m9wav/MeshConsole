@@ -16,6 +16,26 @@ from meshconsole.models import BackendType, UnifiedPacket, UnifiedNode
 class MeshBackend(ABC):
     """Abstract base class for mesh device backends."""
 
+    def __init__(self):
+        self._device_id: str = ""
+
+    @property
+    def device_id(self) -> str:
+        """Return a unique identifier for this backend instance.
+
+        Format: ``{backend_type}:{local_node_id}`` by default, but can be
+        overridden via the setter for user-assigned names.
+        """
+        if self._device_id:
+            return self._device_id
+        if self.local_node_id:
+            return f"{self.backend_type.value}:{self.local_node_id}"
+        return f"{self.backend_type.value}:{id(self)}"
+
+    @device_id.setter
+    def device_id(self, value: str):
+        self._device_id = value
+
     @property
     @abstractmethod
     def backend_type(self) -> BackendType:

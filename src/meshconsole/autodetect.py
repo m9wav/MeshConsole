@@ -122,7 +122,6 @@ def auto_detect_devices() -> list[DetectedDevice]:
             logger.info(f"  Found MeshCore device: {result.device_name or 'unnamed'} on {port}")
             detected.append(result)
             used_ports.add(port)
-            break  # Only one MeshCore device for now
 
     # Probe remaining ports for Meshtastic
     for port in ports:
@@ -134,7 +133,6 @@ def auto_detect_devices() -> list[DetectedDevice]:
             logger.info(f"  Found Meshtastic device: {result.device_name or 'unnamed'} on {port}")
             detected.append(result)
             used_ports.add(port)
-            break  # Only one Meshtastic device for now
 
     if not detected:
         logger.warning("No mesh devices detected on any serial port")
