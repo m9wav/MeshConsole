@@ -1,5 +1,33 @@
 # Changelog
 
+## v3.1.0 (2026-03-18)
+
+USB auto-detection and flexible dependency installation.
+
+### New Features
+
+- **USB auto-detection** -- `meshconsole listen --usb --web` now scans all serial ports, identifies which are Meshtastic and which are MeshCore, and connects to everything it finds. No need to specify `--backend`, `--port`, or `--mc-serial`. Just plug in and go.
+
+- **Flexible dependencies** -- Backends are now fully optional. Neither Meshtastic nor MeshCore is a hard dependency:
+  - `pip install meshconsole[meshtastic]` -- Meshtastic support only
+  - `pip install meshconsole[meshcore]` -- MeshCore support only
+  - `pip install meshconsole[all]` -- both backends
+  - `pip install meshconsole` -- core only (web UI, database, CLI framework)
+
+- **Auto backend mode** -- New `--backend auto` option (and the default when using `--usb` without explicit ports). Probes MeshCore first (fast fail), then Meshtastic, and sets single or dual mode based on what's detected.
+
+- **Smart fallback** -- If only one backend library is installed, MeshConsole automatically defaults to that backend without requiring explicit `--backend` selection.
+
+### Changes
+
+- `meshtastic` and `protobuf` moved from core dependencies to `[meshtastic]` optional extra
+- `pyserial` added as a core dependency (lightweight, needed for port scanning)
+- `MeshtasticBackend` now has an import guard matching the existing `MeshCoreBackend` pattern
+- All top-level meshtastic imports removed from `core.py` -- the package now imports cleanly even without meshtastic installed
+- Clear error messages when a backend library is missing (e.g., "Install with: pip install meshconsole[meshtastic]")
+
+---
+
 ## v3.0.0 (2026-03-17)
 
 Major release adding MeshCore backend support alongside the existing Meshtastic backend.

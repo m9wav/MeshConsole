@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "meshconsole"
-version = "3.0.0"
+version = "3.1.0"
 description = "A powerful CLI and web interface for Meshtastic and MeshCore mesh networking devices"
 readme = "README.md"
 license = "MIT"
@@ -30,17 +30,17 @@ classifiers = [
 ]
 requires-python = ">=3.9"
 dependencies = [
-    "meshtastic>=2.0.0",
     "Flask>=2.0.0",
     "Flask-CORS>=4.0.0",
-    "protobuf>=3.20.0",
     "pypubsub>=4.0.0",
+    "pyserial>=3.5",
     "requests>=2.25.0",
 ]
 
 [project.optional-dependencies]
+meshtastic = ["meshtastic>=2.0.0", "protobuf>=3.20.0"]
 meshcore = ["meshcore>=0.1.0"]
-all = ["meshcore>=0.1.0"]
+all = ["meshtastic>=2.0.0", "protobuf>=3.20.0", "meshcore>=0.1.0"]
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",

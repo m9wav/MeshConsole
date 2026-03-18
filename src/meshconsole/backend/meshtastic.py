@@ -18,18 +18,23 @@ from datetime import datetime
 from dataclasses import asdict
 from typing import Optional, Callable
 
-import meshtastic
-import meshtastic.tcp_interface
-import meshtastic.serial_interface
-from meshtastic import portnums_pb2 as portnums
-from meshtastic.protobuf import mesh_pb2
-from google.protobuf.json_format import MessageToDict
-from pubsub import pub
-
 from meshconsole.models import BackendType, UnifiedPacket, UnifiedNode
 from meshconsole.backend.base import MeshBackend
 
 logger = logging.getLogger(__name__)
+
+# ── Import guard ──────────────────────────────────────────────────
+try:
+    import meshtastic
+    import meshtastic.tcp_interface
+    import meshtastic.serial_interface
+    from meshtastic import portnums_pb2 as portnums
+    from meshtastic.protobuf import mesh_pb2
+    from google.protobuf.json_format import MessageToDict
+    from pubsub import pub
+    MESHTASTIC_AVAILABLE = True
+except ImportError:
+    MESHTASTIC_AVAILABLE = False
 
 
 class MeshtasticBackend(MeshBackend):
@@ -48,6 +53,12 @@ class MeshtasticBackend(MeshBackend):
         db_handler=None,
         verbose: bool = False,
     ):
+        if not MESHTASTIC_AVAILABLE:
+            raise ImportError(
+                "meshtastic is required for Meshtastic support. "
+                "Install it with: pip install meshconsole[meshtastic]"
+            )
+
         self._device_ip = device_ip
         self._serial_port = serial_port
         self._connection_type = connection_type
