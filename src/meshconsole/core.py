@@ -11,7 +11,7 @@ exactly as before.
 
 Author: M9WAV
 License: MIT
-Version: 3.0.0
+Version: 3.1.0
 """
 
 import argparse
@@ -30,21 +30,9 @@ import os
 import hashlib
 import secrets
 
-# Meshtastic imports (may fail if not installed, but they're required deps)
-import meshtastic
-import meshtastic.tcp_interface
-import meshtastic.serial_interface
-from meshtastic import portnums_pb2 as portnums
-from pubsub import pub
-
-# Flask imports
-from flask import Flask, render_template, jsonify, Response, request, session
-from flask_cors import CORS
+# Flask imports (used by require_auth decorator for backward compat)
+from flask import jsonify, session
 from functools import wraps
-
-# Traceroute imports
-from meshtastic.protobuf import mesh_pb2
-from google.protobuf.json_format import MessageToDict
 
 # ── New modular imports ───────────────────────────────────────────
 from meshconsole.models import (
@@ -57,8 +45,6 @@ from meshconsole.models import (
 from meshconsole.database import DatabaseHandler
 from meshconsole.config import MeshConsoleConfig
 from meshconsole.backend.base import MeshBackend
-from meshconsole.backend.meshtastic import MeshtasticBackend
-from meshconsole.backend import create_backend
 
 # Set up module-level logger
 logger = logging.getLogger(__name__)
@@ -181,15 +167,24 @@ class MeshtasticTool:
 
         # Create the Meshtastic backend only if needed
         if self.backend_mode in ('meshtastic', 'dual'):
-            self._backend = MeshtasticBackend(
-                device_ip=self.device_ip,
-                serial_port=self.serial_port,
-                connection_type=self.connection_type,
-                sender_filter=self.sender_filter,
-                db_handler=self.db_handler,
-                verbose=self.verbose,
-            )
-            self._backend.on_packet_received(self._handle_backend_packet)
+            try:
+                from meshconsole.backend.meshtastic import MeshtasticBackend
+                self._backend = MeshtasticBackend(
+                    device_ip=self.device_ip,
+                    serial_port=self.serial_port,
+                    connection_type=self.connection_type,
+                    sender_filter=self.sender_filter,
+                    db_handler=self.db_handler,
+                    verbose=self.verbose,
+                )
+                self._backend.on_packet_received(self._handle_backend_packet)
+            except ImportError:
+                if self.backend_mode == 'meshtastic':
+                    raise MeshtasticToolError(
+                        "meshtastic package required. Install with: pip install meshconsole[meshtastic]"
+                    )
+                logger.warning("Meshtastic unavailable; continuing with MeshCore only.")
+                self._backend = None
         else:
             self._backend = None
 
@@ -280,6 +275,11 @@ class MeshtasticTool:
 
         Also connects MeshCore backend if the backend mode is 'meshcore' or 'dual'.
         """
+        # Auto-detect if backend_mode is 'auto'
+        if self.backend_mode == 'auto':
+            self._auto_detect_and_connect()
+            return
+
         # Connect Meshtastic backend (unless mode is meshcore-only)
         if self.backend_mode in ('meshtastic', 'dual'):
             try:
@@ -343,6 +343,7 @@ class MeshtasticTool:
                     f"Set it in config.ini [MeshCore] or via environment variables."
                 )
 
+            from meshconsole.backend import create_backend
             self._meshcore_backend = create_backend(
                 BackendType.MESHCORE,
                 connection_type=mc_conn_type,
@@ -363,6 +364,60 @@ class MeshtasticTool:
             logger.error(f"Failed to connect MeshCore backend: {e}")
             if self.backend_mode == 'meshcore':
                 raise MeshtasticToolError(f"Connection to MeshCore device failed: {e}")
+
+    def _auto_detect_and_connect(self):
+        """Auto-detect USB devices and connect to them."""
+        from meshconsole.autodetect import auto_detect_devices
+
+        devices = auto_detect_devices()
+        if not devices:
+            raise MeshtasticToolError("No mesh devices detected. Check USB connections.")
+
+        for device in devices:
+            if device.backend_type == BackendType.MESHTASTIC:
+                try:
+                    from meshconsole.backend.meshtastic import MeshtasticBackend
+                    self._backend = MeshtasticBackend(
+                        serial_port=device.port,
+                        connection_type='usb',
+                        db_handler=self.db_handler,
+                        verbose=self.verbose,
+                    )
+                    self._backend.on_packet_received(self._handle_backend_packet)
+                    self._backend.connect()
+                    self.connection_start_time = datetime.now()
+                    logger.info(f"Auto-connected Meshtastic on {device.port}")
+                except Exception as e:
+                    logger.error(f"Failed to connect Meshtastic on {device.port}: {e}")
+
+            elif device.backend_type == BackendType.MESHCORE:
+                try:
+                    from meshconsole.backend import create_backend
+                    self._meshcore_backend = create_backend(
+                        BackendType.MESHCORE,
+                        connection_type='usb',
+                        address=device.port,
+                        verbose=self.verbose,
+                    )
+                    self._meshcore_backend.on_packet_received(self._handle_backend_packet)
+                    self._meshcore_backend.connect()
+                    logger.info(f"Auto-connected MeshCore on {device.port}")
+                except Exception as e:
+                    logger.error(f"Failed to connect MeshCore on {device.port}: {e}")
+
+        # Update backend mode based on what connected
+        has_mt = self._backend is not None and self._backend.is_connected
+        has_mc = self._meshcore_backend is not None and self._meshcore_backend.is_connected
+        if has_mt and has_mc:
+            self.backend_mode = 'dual'
+        elif has_mt:
+            self.backend_mode = 'meshtastic'
+        elif has_mc:
+            self.backend_mode = 'meshcore'
+        else:
+            raise MeshtasticToolError("Failed to connect to any detected devices.")
+
+        logger.info(f"Auto-detection complete: mode={self.backend_mode}")
 
     def _sync_node_db(self):
         """Sync node database from the Meshtastic device."""
@@ -395,7 +450,7 @@ class MeshtasticTool:
             return self._backend._json_serializer(obj)
         return str(obj)
 
-    def on_connection(self, interface, topic=pub.AUTO_TOPIC):
+    def on_connection(self, interface, topic=None):
         if self._backend:
             self._backend._on_connection(interface, topic)
 

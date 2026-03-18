@@ -7,35 +7,41 @@
 </p>
 
 <p align="center">
-  <a href="https://pypi.org/project/meshconsole/"><img src="https://img.shields.io/pypi/v/meshconsole?v=3.0.0" alt="PyPI"></a>
+  <a href="https://pypi.org/project/meshconsole/"><img src="https://img.shields.io/pypi/v/meshconsole?v=3.1.0" alt="PyPI"></a>
   <a href="https://m9wav.uk/">m9wav.uk</a>
 </p>
 
 ---
 
-## What's New in v3.0.0
+## What's New in v3.1.0
 
-- **MeshCore backend support** -- connect to MeshCore devices via BLE, serial, or TCP alongside Meshtastic
-- **Dual-device mode** -- monitor a Meshtastic and MeshCore device simultaneously from a single dashboard
-- **Modular architecture** -- refactored from a monolithic core into clean backend/orchestrator/web modules
-- **Backend badges and filters** -- the web UI shows which backend each packet came from, with filtering
-- **70-test suite** -- comprehensive test coverage for all components
-- **Automatic database migration** -- existing v2.x databases are upgraded transparently on first run
-- **Fully backward compatible** -- all existing CLI commands, config files, and APIs continue to work unchanged
+- **Plug and play** -- `meshconsole listen --usb --web` now auto-detects all connected devices (Meshtastic and MeshCore) and connects to them automatically. No config needed.
+- **Install only what you need** -- backends are now fully optional. Install just `meshconsole[meshtastic]`, just `meshconsole[meshcore]`, or `meshconsole[all]` for both. Neither community is a second-class citizen.
+- **Auto backend mode** -- `--backend auto` scans serial ports, identifies device types, and sets single or dual mode based on what's found.
+
+### v3.0.0
+
+- MeshCore backend support (BLE, serial, TCP)
+- Dual-device mode -- monitor Meshtastic and MeshCore simultaneously
+- Modular architecture, backend badges/filters, 70-test suite
+- Automatic database migration from v2.x
 
 ---
 
 ## Installation
 
 ```bash
-# Meshtastic support only (same as before)
-pip install meshconsole
+# Just Meshtastic
+pip install meshconsole[meshtastic]
 
-# With MeshCore support
+# Just MeshCore
 pip install meshconsole[meshcore]
 
-# Everything (MeshCore + dev tools)
+# Both backends
 pip install meshconsole[all]
+
+# Core only (no backend deps -- for custom setups)
+pip install meshconsole
 ```
 
 Or install from source:
@@ -43,19 +49,20 @@ Or install from source:
 ```bash
 git clone https://github.com/m9wav/MeshConsole.git
 cd MeshConsole
-pip install -e ".[meshcore]"
+pip install -e ".[all]"
 ```
 
 ---
 
 So I got really into Meshtastic after picking up a couple of LoRa radios and wanted a way to monitor my mesh network from my computer. The official app is fine but I wanted something I could leave running on a server, log everything to a database, and maybe poke at later.
 
-This started as a quick script and... well, it grew. Now it's got a web UI, MeshCore support, dual-device mode, and everything. Figured I'd clean it up and share it.
+This started as a quick script and... well, it grew. Now it's got a web UI, MeshCore support, dual-device mode, USB auto-detection, and everything. Figured I'd clean it up and share it.
 
 ## What it does
 
-- Connects to your **Meshtastic** device over **USB or TCP/IP** (WiFi)
-- Connects to your **MeshCore** device over **BLE, serial, or TCP**
+- **Auto-detects** your Meshtastic and MeshCore devices over USB -- just plug in and go
+- Connects to **Meshtastic** over USB or TCP/IP (WiFi)
+- Connects to **MeshCore** over BLE, serial, or TCP
 - Runs both backends simultaneously in **dual mode**
 - Logs all packets to a SQLite database (with backend tagging)
 - Shows a live web dashboard with all the node activity
@@ -65,68 +72,32 @@ This started as a quick script and... well, it grew. Now it's got a web UI, Mesh
 
 The web interface shows positions on a map, telemetry data (battery, signal strength, etc), and you can see message history. Pretty handy for debugging mesh issues.
 
-## Setup
-
-```bash
-pip install meshconsole
-cp config.example.ini config.ini
-```
-
-Edit `config.ini` with your setup. The main thing is picking your backend and connection type:
-
-```ini
-[Device]
-# "usb" for plugged-in device, "tcp" for network
-connection_type = usb
-
-# Only needed for TCP mode
-ip = 192.168.1.100
-
-# Usually leave blank for auto-detect, but you can specify
-# serial_port = /dev/cu.usbserial-0001
-```
-
-If you're using TCP, your device needs to have WiFi enabled and you need to know its IP.
-
 ## Quick Start
 
-### Meshtastic -- USB Connection (device plugged in)
+The simplest way -- plug in your device(s) and run:
 
 ```bash
-# Start web dashboard with USB-connected device
 meshconsole listen --usb --web
-
-# Specify serial port explicitly
-meshconsole listen --usb --port /dev/ttyUSB0 --web
-
-# macOS example
-meshconsole listen --usb --port /dev/cu.usbserial-0001 --web
 ```
 
-### Meshtastic -- TCP/IP Connection (WiFi-enabled device)
+MeshConsole will scan your serial ports, figure out what's Meshtastic and what's MeshCore, and connect to everything it finds. Open **http://localhost:5055** in your browser.
+
+### Explicit connections
 
 ```bash
-# Start web dashboard with network-connected device
+# Meshtastic via USB (specific port)
+meshconsole listen --usb --port /dev/ttyACM0 --web
+
+# Meshtastic via TCP/IP
 meshconsole listen --ip 192.168.1.100 --web
-```
 
-Then open **http://localhost:5055** in your browser.
+# MeshCore via serial
+meshconsole listen --backend meshcore --mc-serial /dev/ttyUSB0 --web
 
-### MeshCore -- Serial Connection
-
-```bash
-meshconsole listen --backend meshcore --mc-serial /dev/cu.usbserial-0001 --web
-```
-
-### MeshCore -- BLE Connection
-
-```bash
+# MeshCore via BLE
 meshconsole listen --backend meshcore --mc-ble "AA:BB:CC:DD:EE:FF" --web
-```
 
-### Dual Mode -- Meshtastic + MeshCore simultaneously
-
-```bash
+# Dual mode (explicit)
 meshconsole listen --backend dual --usb --mc-serial /dev/ttyUSB0 --web
 ```
 
@@ -146,32 +117,58 @@ meshconsole send --usb --dest !12345678 --message "hey there"
 meshconsole traceroute --usb --dest !12345678
 ```
 
-## MeshCore Configuration
+## Configuration
 
-To use MeshCore, install with `pip install meshconsole[meshcore]` and add these sections to your `config.ini`:
+For more control, create a `config.ini`:
+
+```bash
+cp config.example.ini config.ini
+```
+
+### Meshtastic only
+
+```ini
+[Device]
+connection_type = usb
+serial_port = /dev/ttyACM0
+```
+
+### MeshCore only
 
 ```ini
 [Backend]
-# Backend mode: meshtastic, meshcore, or dual
-# Default: meshtastic (backward compatible -- omit this section entirely for existing setups)
 mode = meshcore
 
 [MeshCore]
-# Connection type: ble, usb, or tcp
 connection_type = usb
-# Serial port (for usb connection type)
 serial_port = /dev/ttyUSB0
-# BLE address (for ble connection type)
-ble_address =
-# BLE PIN (optional, for secured devices)
-ble_pin =
-# TCP host (for tcp connection type)
-tcp_host =
-# TCP port (for tcp connection type)
-tcp_port =
 ```
 
-For dual mode, set `mode = dual` and configure both `[Device]` (Meshtastic) and `[MeshCore]` sections. CLI arguments (`--backend`, `--mc-serial`, etc.) override config file values.
+### Dual mode
+
+```ini
+[Backend]
+mode = dual
+
+[Device]
+connection_type = usb
+serial_port = /dev/ttyACM0
+
+[MeshCore]
+connection_type = usb
+serial_port = /dev/ttyUSB0
+```
+
+### Auto-detect (default for USB)
+
+```ini
+[Device]
+connection_type = usb
+```
+
+No `[Backend]` section needed -- MeshConsole will scan and detect automatically when using USB without explicit ports.
+
+CLI arguments (`--backend`, `--mc-serial`, etc.) always override config file values.
 
 ## The web dashboard
 
@@ -192,7 +189,7 @@ There's a password for sending messages/traceroutes so you can leave the dashboa
 For running MeshConsole as a persistent service behind a reverse proxy (nginx, caddy, etc.):
 
 ```bash
-pip install meshconsole[meshcore] gunicorn
+pip install meshconsole[all] gunicorn
 ```
 
 Create a `wsgi.py` entry point, then run with gunicorn:
@@ -229,7 +226,7 @@ After running for a while you'll have:
 - `meshtastic_messages.db` - SQLite database with all your packets
 - `meshtastic_tool.log` - Logs (rotates automatically)
 
-The database is useful if you want to do your own analysis. The `packets` table has everything including the full raw packet data as JSON. In v3.0.0, packets also include a `backend` column indicating which backend they came from.
+The database is useful if you want to do your own analysis. The `packets` table has everything including the full raw packet data as JSON, with a `backend` column indicating which backend each packet came from.
 
 ## Exporting data
 
@@ -258,22 +255,25 @@ Or use the Export button in the web dashboard's Settings tab.
 - For serial, check that the correct port is specified with `--mc-serial`
 - The device must be running MeshCore companion firmware
 
+**"meshtastic package required" error:**
+- Install the meshtastic extra: `pip install meshconsole[meshtastic]`
+
+**Auto-detect not finding devices:**
+- Check that devices show up in `ls /dev/ttyUSB* /dev/ttyACM*`
+- Install the backend libraries: `pip install meshconsole[all]`
+- Try specifying ports explicitly to narrow down the issue
+
 **Web interface not loading:**
 - Check if port 5055 is already in use
 - Try a different port in `config.ini` under `[Web]`
 
-**Seeing your own messages in the log:**
-- Shouldn't happen - the tool auto-detects your local node and filters it out
-- If it's not working, check the logs for the detected node ID
-
 ## Dependencies
 
-- meshtastic
-- flask
-- flask-cors
-- protobuf
-- pypubsub
-- meshcore (optional, for MeshCore support)
+Core: flask, flask-cors, pypubsub, pyserial, requests
+
+Optional backends:
+- `meshconsole[meshtastic]`: meshtastic, protobuf
+- `meshconsole[meshcore]`: meshcore
 
 ## License
 

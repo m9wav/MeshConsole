@@ -24,7 +24,7 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
 
-    parser.add_argument('--version', action='version', version='MeshConsole 3.0.0')
+    parser.add_argument('--version', action='version', version='MeshConsole 3.1.0')
 
     subparsers = parser.add_subparsers(dest='command', help='Available commands')
 
@@ -39,7 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_argument('--port', type=str, required=False,
                          help="Serial port for USB connection (e.g., /dev/cu.usbserial-0001)")
         # New v3.0 backend arguments
-        sub.add_argument('--backend', choices=['meshtastic', 'meshcore', 'dual'],
+        sub.add_argument('--backend', choices=['meshtastic', 'meshcore', 'dual', 'auto'],
                          default=None,
                          help="Backend mode (default: from config)")
         sub.add_argument('--mc-ble', type=str, metavar='ADDRESS',
@@ -105,10 +105,40 @@ def _apply_backend_env(args):
 
     MeshtasticTool.__init__ and _connect_meshcore() already read these env
     vars, so setting them before instantiation is the simplest bridge.
+
+    When --usb is passed without --port and --mc-serial, and no explicit
+    backend is set, defaults to 'auto' mode for USB auto-detection.
+
+    If no backend is specified and meshtastic is unavailable but meshcore is,
+    defaults to meshcore mode.
     """
     import os
 
     backend = getattr(args, 'backend', None)
+
+    # Auto-detect mode: --usb without explicit ports and no explicit backend
+    if not backend:
+        usb = getattr(args, 'usb', False)
+        port = getattr(args, 'port', None)
+        mc_serial = getattr(args, 'mc_serial', None)
+        if usb and not port and not mc_serial:
+            backend = 'auto'
+
+    # If no backend specified, check availability and fall back
+    if not backend:
+        try:
+            from meshconsole.backend.meshtastic import MESHTASTIC_AVAILABLE
+        except ImportError:
+            MESHTASTIC_AVAILABLE = False
+        if not MESHTASTIC_AVAILABLE:
+            try:
+                from meshconsole.backend.meshcore import MESHCORE_AVAILABLE
+            except ImportError:
+                MESHCORE_AVAILABLE = False
+            if MESHCORE_AVAILABLE:
+                logger.info("Meshtastic unavailable; defaulting to meshcore backend.")
+                backend = 'meshcore'
+
     if backend:
         os.environ['MESHCONSOLE_BACKEND_MODE'] = backend
 

@@ -23,8 +23,14 @@ def get_backend_class(backend_type: BackendType) -> type:
     """Get the backend class for a given type, importing lazily."""
     if backend_type not in _BACKEND_CLASSES:
         if backend_type == BackendType.MESHTASTIC:
-            from meshconsole.backend.meshtastic import MeshtasticBackend
-            register_backend(BackendType.MESHTASTIC, MeshtasticBackend)
+            try:
+                from meshconsole.backend.meshtastic import MeshtasticBackend
+                register_backend(BackendType.MESHTASTIC, MeshtasticBackend)
+            except ImportError:
+                raise ImportError(
+                    "meshtastic is required for Meshtastic support. "
+                    "Install it with: pip install meshconsole[meshtastic]"
+                )
         elif backend_type == BackendType.MESHCORE:
             try:
                 from meshconsole.backend.meshcore import MeshCoreBackend
