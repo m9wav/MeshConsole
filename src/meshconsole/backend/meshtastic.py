@@ -156,6 +156,7 @@ class MeshtasticBackend(MeshBackend):
 
     def disconnect(self) -> None:
         """Cleanly disconnect from the device."""
+        self._connected = False
         # Unsubscribe from pypubsub to prevent stale callbacks
         if self._subscribed:
             try:
@@ -164,15 +165,26 @@ class MeshtasticBackend(MeshBackend):
             except Exception:
                 pass
             self._subscribed = False
-        try:
-            if self._interface:
-                if hasattr(self._interface, 'close'):
-                    self._interface.close()
-        except Exception as e:
-            logger.error(f"Error closing Meshtastic interface: {e}")
-        finally:
-            self._interface = None
-            self._connected = False
+        # Close the interface, suppressing any broken pipe errors
+        iface = self._interface
+        self._interface = None
+        if iface:
+            try:
+                # Kill the heartbeat timer to prevent BrokenPipeError
+                if hasattr(iface, 'heartbeatTimer') and iface.heartbeatTimer:
+                    iface.heartbeatTimer.cancel()
+                    iface.heartbeatTimer = None
+                if hasattr(iface, 'close'):
+                    iface.close()
+            except (BrokenPipeError, OSError, Exception) as e:
+                logger.debug(f"Expected error closing Meshtastic interface: {e}")
+
+    def reconnect(self) -> None:
+        """Disconnect and reconnect to the same device."""
+        logger.info(f"Reconnecting Meshtastic ({self._connection_type})...")
+        self.disconnect()
+        time.sleep(1)
+        self.connect()
 
     def get_nodes(self) -> dict[str, UnifiedNode]:
         """Return all known nodes, keyed by canonical node_id."""

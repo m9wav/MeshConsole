@@ -64,6 +64,11 @@ class MeshBackend(ABC):
         """Cleanly disconnect from the device."""
         ...
 
+    def reconnect(self) -> None:
+        """Disconnect and reconnect to the same device."""
+        self.disconnect()
+        self.connect()
+
     @abstractmethod
     def get_nodes(self) -> dict[str, UnifiedNode]:
         """Return all known nodes, keyed by canonical node_id."""

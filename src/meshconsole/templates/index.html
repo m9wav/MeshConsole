@@ -1594,9 +1594,11 @@
 
                 appState.nodes = nodes;
                 // Sort by lastSeen descending (most recent first)
-                const sortedNodes = Object.values(nodes).sort((a, b) =>
-                    new Date(b.lastSeen) - new Date(a.lastSeen)
-                );
+                const sortedNodes = Object.values(nodes).sort((a, b) => {
+                    const dateA = new Date(a.lastSeen || 0);
+                    const dateB = new Date(b.lastSeen || 0);
+                    return (isNaN(dateB) ? 0 : dateB) - (isNaN(dateA) ? 0 : dateA);
+                });
                 appState.sortedNodes = sortedNodes;
                 renderNodes(sortedNodes);
                 populateNodeSelects(sortedNodes);
@@ -1740,7 +1742,7 @@
                                 ${nodeIdDisplay}
                             </p>
                             <p class="text-muted small mb-0">
-                                <i class="bi bi-clock"></i> Last seen: ${new Date(node.lastSeen).toLocaleString()}
+                                <i class="bi bi-clock"></i> Last seen: ${node.lastSeen ? (isNaN(new Date(node.lastSeen).getTime()) ? 'Unknown' : new Date(node.lastSeen).toLocaleString()) : 'Unknown'}
                             </p>
                         </div>
                     </div>
