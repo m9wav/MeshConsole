@@ -746,43 +746,46 @@ class MeshtasticTool:
                     # ── Health check each backend independently ──
                     failed_backends = []
                     for b in list(self.backends):
-                        if b.backend_type == BackendType.MESHTASTIC:
-                            iface = getattr(b, 'interface', None)
-                            if not iface:
-                                failed_backends.append(b)
-                                continue
+                        try:
+                            if b.backend_type == BackendType.MESHTASTIC:
+                                iface = getattr(b, 'interface', None)
+                                if not iface:
+                                    failed_backends.append(b)
+                                    continue
 
-                            healthy = True
-                            if hasattr(iface, 'isConnected') and not iface.isConnected:
-                                healthy = False
-
-                            if hasattr(iface, 'socket') and iface.socket:
-                                try:
-                                    error = iface.socket.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR)
-                                    if error != 0:
-                                        healthy = False
-                                except Exception:
+                                healthy = True
+                                if hasattr(iface, 'isConnected') and not iface.isConnected:
                                     healthy = False
 
-                            if current_time - last_packet_time > connection_timeout * 2:
-                                healthy = False
+                                if hasattr(iface, 'socket') and iface.socket:
+                                    try:
+                                        error = iface.socket.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR)
+                                        if error != 0:
+                                            healthy = False
+                                    except (BrokenPipeError, OSError):
+                                        healthy = False
 
-                            try:
-                                if hasattr(iface, 'nodes'):
-                                    _ = len(iface.nodes)
-                            except Exception:
-                                healthy = False
+                                try:
+                                    if hasattr(iface, 'nodes'):
+                                        _ = len(iface.nodes)
+                                except (BrokenPipeError, OSError, Exception):
+                                    healthy = False
 
-                            if not healthy:
-                                failed_backends.append(b)
+                                if not healthy:
+                                    failed_backends.append(b)
 
-                        elif b.backend_type == BackendType.MESHCORE:
-                            if not b.is_connected:
-                                failed_backends.append(b)
+                            elif b.backend_type == BackendType.MESHCORE:
+                                if not b.is_connected:
+                                    failed_backends.append(b)
+                        except (BrokenPipeError, OSError) as health_err:
+                            logger.debug(f"Health check error for {b.device_id}: {health_err}")
+                            failed_backends.append(b)
 
                     if failed_backends:
+                        # Only raise if at least one backend was supposed to be connected
+                        names = [b.device_id for b in failed_backends]
                         raise ConnectionError(
-                            f"{len(failed_backends)} backend(s) failed health check"
+                            f"Backend(s) failed health check: {', '.join(names)}"
                         )
 
                     # ── Track packet activity ──
@@ -800,30 +803,43 @@ class MeshtasticTool:
             except (ConnectionError, BrokenPipeError, OSError, socket.error, Exception) as e:
                 logger.error(f"Connection lost: {e}")
 
-                # ── Cleanup failed backends ──
-                for b in list(self.backends):
-                    if not b.is_connected or (b.backend_type == BackendType.MESHTASTIC and not getattr(b, 'interface', None)):
-                        try:
-                            b.disconnect()
-                        except Exception:
-                            pass
-
                 time.sleep(2)
-
                 logger.info(f"Attempting to reconnect in {retry_delay} seconds...")
                 time.sleep(retry_delay)
 
-                try:
-                    logger.info("Reconnecting backends...")
-                    self._connect_interface()
-                    self._sync_node_db()
+                # ── Reconnect only failed backends, leave healthy ones alone ──
+                reconnected_any = False
+                for b in list(self.backends):
+                    # Check if this backend needs reconnection
+                    needs_reconnect = False
+                    if b.backend_type == BackendType.MESHTASTIC:
+                        iface = getattr(b, 'interface', None)
+                        if not iface or not b.is_connected:
+                            needs_reconnect = True
+                        elif hasattr(iface, 'isConnected') and not iface.isConnected:
+                            needs_reconnect = True
+                    elif not b.is_connected:
+                        needs_reconnect = True
+
+                    if not needs_reconnect:
+                        continue
+
+                    try:
+                        logger.info(f"Reconnecting {b.device_id}...")
+                        b.reconnect()
+                        if b.backend_type == BackendType.MESHTASTIC:
+                            b._sync_node_db()
+                        reconnected_any = True
+                        logger.info(f"Reconnected {b.device_id}")
+                    except Exception as re:
+                        logger.error(f"Reconnection failed for {b.device_id}: {re}")
+
+                if reconnected_any:
                     retry_delay = 1
                     last_packet_time = time.time()
-                    logger.info("Successfully reconnected.")
-                except Exception as reconnect_error:
-                    logger.error(f"Reconnection attempt failed: {reconnect_error}")
+                else:
                     retry_delay = min(retry_delay * 2, max_retry_delay)
-                    continue
+                continue
 
     def _load_recent_packets_from_db(self):
         """Load recent packets from database into memory for web interface."""
