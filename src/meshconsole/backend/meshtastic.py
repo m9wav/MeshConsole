@@ -35,6 +35,7 @@ try:
     MESHTASTIC_AVAILABLE = True
 except ImportError:
     MESHTASTIC_AVAILABLE = False
+    pub = None
 
 
 class MeshtasticBackend(MeshBackend):
@@ -228,7 +229,7 @@ class MeshtasticBackend(MeshBackend):
 
     # ── Internal event handlers ───────────────────────────────────
 
-    def _on_connection(self, interface, topic=pub.AUTO_TOPIC):
+    def _on_connection(self, interface, topic=None):
         """Handle connection establishment."""
         if self._connection_type.lower() == 'usb':
             conn_info = self._serial_port or "auto-detected USB"
