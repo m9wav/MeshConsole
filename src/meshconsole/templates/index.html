@@ -2199,16 +2199,15 @@
                             entries.forEach((info, idx) => {
                                 const isConn = info.connected;
                                 const indicatorClass = isConn ? 'status-online' : 'status-offline';
-                                const typeName = (info.type || 'unknown');
-                                const label = typeName.charAt(0).toUpperCase() + typeName.slice(1);
-                                const statusLabel = isConn ? 'Connected' : 'Disconnected';
-                                const deviceName = info.device_name ? ` (${info.device_name})` : '';
+                                const deviceName = info.device_name || '';
                                 statusHtml += `<span class="backend-status-item">`;
                                 statusHtml += `<span class="status-indicator ${indicatorClass}"></span>`;
-                                if (entries.length > 1) {
-                                    statusHtml += `${label}: ${statusLabel}${deviceName}`;
+                                if (isConn && deviceName) {
+                                    statusHtml += deviceName;
                                 } else {
-                                    statusHtml += `${statusLabel}${deviceName}`;
+                                    const typeName = (info.type || 'unknown');
+                                    const label = typeName.charAt(0).toUpperCase() + typeName.slice(1);
+                                    statusHtml += isConn ? label : `${label}: Offline`;
                                 }
                                 statusHtml += `</span>`;
                                 if (idx < entries.length - 1) {
