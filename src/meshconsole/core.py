@@ -11,7 +11,7 @@ compatible properties that search the list.
 
 Author: M9WAV
 License: MIT
-Version: 3.3.0
+Version: 3.4.4
 """
 
 import argparse
@@ -963,6 +963,10 @@ class MeshtasticTool:
         last_packet_time = time.time()
         connection_timeout = 60
 
+        # Per-backend retry tracking: {device_id: {'failures': N, 'next_retry': timestamp}}
+        _backend_retry_state: dict[str, dict] = {}
+        _MAX_CONSECUTIVE_FAILURES = 10  # Suspend backend after this many consecutive failures
+
         while True:
             try:
                 while True:
@@ -980,9 +984,12 @@ class MeshtasticTool:
                                     continue
 
                                 healthy = True
+
+                                # Check 1: meshtastic library's own connected flag
                                 if hasattr(iface, 'isConnected') and not iface.isConnected:
                                     healthy = False
 
+                                # Check 2: TCP socket error check
                                 if hasattr(iface, 'socket') and iface.socket:
                                     try:
                                         error = iface.socket.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR)
@@ -991,6 +998,27 @@ class MeshtasticTool:
                                     except (BrokenPipeError, OSError):
                                         healthy = False
 
+                                # Check 3: reader thread must be alive (detects
+                                # "Connection reset by peer" kills)
+                                if healthy and hasattr(iface, '_readThread'):
+                                    rt = iface._readThread
+                                    if rt is not None and not rt.is_alive():
+                                        logger.warning(
+                                            f"Meshtastic reader thread dead for {b.device_id}"
+                                        )
+                                        healthy = False
+
+                                # Check 4: heartbeat timer should exist and not
+                                # have been cancelled/crashed
+                                if healthy and hasattr(iface, 'heartbeatTimer'):
+                                    ht = iface.heartbeatTimer
+                                    if ht is not None and not ht.is_alive():
+                                        logger.warning(
+                                            f"Meshtastic heartbeat timer dead for {b.device_id}"
+                                        )
+                                        healthy = False
+
+                                # Check 5: probe iface.nodes for broken pipe
                                 try:
                                     if hasattr(iface, 'nodes'):
                                         _ = len(iface.nodes)
@@ -1030,12 +1058,12 @@ class MeshtasticTool:
                 logger.error(f"Connection lost: {e}")
 
                 time.sleep(2)
-                logger.info(f"Attempting to reconnect in {retry_delay} seconds...")
-                time.sleep(retry_delay)
 
                 # ── Reconnect only failed backends, leave healthy ones alone ──
                 reconnected_any = False
                 for b in list(self.backends):
+                    did = b.device_id
+
                     # Check if this backend needs reconnection
                     needs_reconnect = False
                     if b.backend_type == BackendType.MESHTASTIC:
@@ -1044,21 +1072,55 @@ class MeshtasticTool:
                             needs_reconnect = True
                         elif hasattr(iface, 'isConnected') and not iface.isConnected:
                             needs_reconnect = True
+                        elif hasattr(iface, '_readThread'):
+                            rt = iface._readThread
+                            if rt is not None and not rt.is_alive():
+                                needs_reconnect = True
                     elif not b.is_connected:
                         needs_reconnect = True
 
                     if not needs_reconnect:
+                        # Backend is healthy — reset its retry state
+                        _backend_retry_state.pop(did, None)
+                        continue
+
+                    # Check per-backend retry state
+                    state = _backend_retry_state.get(did, {'failures': 0, 'next_retry': 0.0})
+
+                    # Skip if suspended (too many consecutive failures)
+                    if state['failures'] >= _MAX_CONSECUTIVE_FAILURES:
+                        # Only retry suspended backends every 5 minutes
+                        if current_time < state.get('next_retry', 0.0):
+                            continue
+                        logger.info(f"Retrying suspended backend {did}...")
+
+                    # Skip if not yet time for next retry
+                    if current_time < state.get('next_retry', 0.0):
                         continue
 
                     try:
-                        logger.info(f"Reconnecting {b.device_id}...")
+                        logger.info(f"Reconnecting {did}...")
                         b.reconnect()
                         if b.backend_type == BackendType.MESHTASTIC:
                             b._sync_node_db()
                         reconnected_any = True
-                        logger.info(f"Reconnected {b.device_id}")
+                        logger.info(f"Reconnected {did}")
+                        _backend_retry_state.pop(did, None)
                     except Exception as re:
-                        logger.error(f"Reconnection failed for {b.device_id}: {re}")
+                        logger.error(f"Reconnection failed for {did}: {re}")
+                        state['failures'] = state.get('failures', 0) + 1
+                        # Exponential backoff per backend: 2, 4, 8, ... 30s, then 300s if suspended
+                        if state['failures'] >= _MAX_CONSECUTIVE_FAILURES:
+                            backoff = 300  # 5 minutes for suspended backends
+                            if state['failures'] == _MAX_CONSECUTIVE_FAILURES:
+                                logger.warning(
+                                    f"Backend {did} suspended after {state['failures']} "
+                                    f"consecutive failures (will retry every 5 min)"
+                                )
+                        else:
+                            backoff = min(2 ** state['failures'], max_retry_delay)
+                        state['next_retry'] = current_time + backoff
+                        _backend_retry_state[did] = state
 
                 if reconnected_any:
                     retry_delay = 1
@@ -1493,6 +1555,113 @@ class MeshtasticTool:
             n['connections'] = sum(1 for l in links if l['source'] == n['id'] or l['target'] == n['id'])
 
         return {'nodes': nodes, 'links': links}
+
+    # ── Flood advertisement ────────────────────────────────────
+
+    def get_meshcore_devices(self) -> list[dict]:
+        """Return a list of connected MeshCore backends (for UI device picker)."""
+        devices = []
+        for b in self.backends:
+            if b.backend_type == BackendType.MESHCORE and b.is_connected:
+                devices.append({
+                    'device_id': b.device_id,
+                    'device_name': getattr(b, '_device_name', '') or b.device_id,
+                    'local_node_id': b.local_node_id,
+                    'pub_key': getattr(b, '_local_pub_key', '') or '',
+                })
+        return devices
+
+    def send_flood_advertisement(self, device_id: str | None = None) -> dict:
+        """Send a flooded advertisement from a MeshCore device.
+
+        Returns a dict with the flood start time and device info so the
+        caller can begin polling for heard-back results.
+        """
+        backend = None
+        for b in self.backends:
+            if b.backend_type == BackendType.MESHCORE and b.is_connected:
+                if device_id is None or b.device_id == device_id:
+                    backend = b
+                    break
+
+        if backend is None:
+            return {'success': False, 'error': 'No connected MeshCore device found'}
+
+        result = backend.send_advertisement(flood=True)
+        if result != 'ok':
+            return {'success': False, 'error': result}
+
+        flood_time = datetime.now().isoformat()
+        pub_key = getattr(backend, '_local_pub_key', '') or ''
+
+        return {
+            'success': True,
+            'flood_time': flood_time,
+            'device_id': backend.device_id,
+            'device_name': getattr(backend, '_device_name', '') or backend.device_id,
+            'pub_key': pub_key,
+        }
+
+    def get_flood_results(self, pub_key: str, since: str) -> dict:
+        """Collect advertisement echo results since a given timestamp.
+
+        After flooding an advertisement, other nodes relay it back.  We
+        look in the recent packets for RX_LOG_DATA / NODEINFO packets
+        that reference our own pub_key (via adv_key) and arrived after
+        ``since``.
+
+        Returns a dict with heard count, node list, and relay details.
+        """
+        if not pub_key:
+            return {'heard': 0, 'nodes': []}
+
+        prefix = pub_key[:12].lower()
+        since_dt = datetime.fromisoformat(since)
+
+        heard_nodes: dict[str, dict] = {}
+
+        with self.latest_packets_lock:
+            for pkt in self.latest_packets:
+                try:
+                    pkt_time = datetime.fromisoformat(pkt.get('timestamp', ''))
+                except (ValueError, TypeError):
+                    continue
+                if pkt_time <= since_dt:
+                    continue
+
+                raw = pkt.get('raw_packet', {})
+                if not isinstance(raw, dict):
+                    continue
+
+                # Match packets that echo our advertisement
+                adv_key = (raw.get('adv_key', '') or '').lower()
+                if not adv_key:
+                    continue
+                if not adv_key.startswith(prefix):
+                    continue
+
+                # This is a relay/echo of our flood advertisement
+                from_id = pkt.get('from_id', '')
+                from_name = pkt.get('from_name', from_id)
+                path = raw.get('path', '')
+                snr = raw.get('snr') or pkt.get('snr')
+                rssi = raw.get('rssi') or pkt.get('rssi')
+
+                node_key = from_name or from_id
+                if node_key not in heard_nodes:
+                    heard_nodes[node_key] = {
+                        'node_id': from_id,
+                        'node_name': from_name,
+                        'snr': snr,
+                        'rssi': rssi,
+                        'path': path,
+                        'timestamp': pkt.get('timestamp', ''),
+                    }
+
+        return {
+            'heard': len(heard_nodes),
+            'nodes': list(heard_nodes.values()),
+        }
 
     def clear_traceroute_results(self):
         # Clear orchestrator-level traceroute state
