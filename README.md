@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <a href="https://pypi.org/project/meshconsole/"><img src="https://img.shields.io/pypi/v/meshconsole?v=3.3.1" alt="PyPI"></a>
+  <a href="https://pypi.org/project/meshconsole/"><img src="https://img.shields.io/pypi/v/meshconsole?v=3.4.0" alt="PyPI"></a>
   <a href="https://m9wav.uk/">m9wav.uk</a>
 </p>
 
@@ -15,9 +15,11 @@
 
 ## What's New
 
-**v3.3.0** -- Auth UX (send/traceroute hidden until login), routing noise filter, cleaner UI
+**v3.4.0** -- Route intelligence: decoded path trails, ML route learning, D3.js mesh topology graph, node search autocomplete
 
-**v3.2.0** -- Unlimited simultaneous devices, `--device` CLI flag, per-device identity
+**v3.3.0** -- Auth UX, routing noise filter, cleaner UI
+
+**v3.2.0** -- Unlimited simultaneous devices, per-device identity
 
 **v3.1.0** -- USB auto-detection, flexible optional dependencies
 
