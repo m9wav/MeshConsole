@@ -375,8 +375,6 @@
             opacity: 0.5;
         }
         .route-trail .hop-local {
-            opacity: 0.45;
-            font-size: 0.7rem;
         }
 
         /* Backend badges */
@@ -757,6 +755,11 @@
                 <li class="nav-item" role="presentation" id="send-tab-item" style="display:none;">
                     <button class="nav-link" id="send-tab" data-bs-toggle="tab" data-bs-target="#send" type="button" role="tab">
                         <i class="bi bi-send"></i> Send Message
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation" id="flood-tab-item" style="display: none;">
+                    <button class="nav-link" id="flood-tab" data-bs-toggle="tab" data-bs-target="#flood" type="button" role="tab">
+                        <i class="bi bi-broadcast"></i> Flood Advert
                     </button>
                 </li>
                 <li class="nav-item" role="presentation" id="traceroute-tab-item" style="display:none;">
@@ -1216,6 +1219,49 @@
                         </div>
                     </div>
                 </div>
+                <!-- Flood Advertisement Tab -->
+                <div class="tab-pane fade" id="flood" role="tabpanel">
+                    <div class="row">
+                        <div class="col-lg-6">
+                            <div class="card card-modern">
+                                <div class="card-header card-header-modern">
+                                    <h5 class="mb-0"><i class="bi bi-broadcast text-warning"></i> Flood Advertisement</h5>
+                                </div>
+                                <div class="card-body">
+                                    <p class="text-muted">Send a flooded advertisement from a MeshCore device. The advertisement will propagate through the mesh network via all reachable repeaters.</p>
+
+                                    <div class="mb-3">
+                                        <label class="form-label">MeshCore Device</label>
+                                        <select class="form-select form-control-modern" id="flood-device-select">
+                                            <option value="">Loading devices...</option>
+                                        </select>
+                                    </div>
+
+                                    <button class="btn btn-warning btn-modern w-100" id="send-flood-btn" disabled>
+                                        <i class="bi bi-broadcast"></i> Send Flood Advertisement
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-lg-6">
+                            <div class="card card-modern">
+                                <div class="card-header card-header-modern">
+                                    <h5 class="mb-0"><i class="bi bi-info-circle text-info"></i> About Flood Advertisements</h5>
+                                </div>
+                                <div class="card-body">
+                                    <p>A flood advertisement broadcasts your node's presence across the entire mesh network with a 255-hop limit.</p>
+                                    <ul class="list-unstyled">
+                                        <li class="mb-2"><i class="bi bi-arrow-right text-primary"></i> Propagates through all reachable repeaters</li>
+                                        <li class="mb-2"><i class="bi bi-arrow-right text-primary"></i> Updates your node info on remote devices</li>
+                                        <li class="mb-2"><i class="bi bi-arrow-right text-primary"></i> Helps establish routing paths to your node</li>
+                                    </ul>
+                                    <div id="flood-status"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
             </div>
         </div>
     </div>
@@ -1426,6 +1472,8 @@
                         if (!appState.meshGraphLoaded) {
                             fetchMeshGraph();
                         }
+                    } else if (target === '#flood') {
+                        loadFloodDevices();
                     }
                 });
             });
@@ -3330,10 +3378,13 @@
             const tracerouteTabItem = document.getElementById('traceroute-tab-item');
             const settingsLogin = document.getElementById('settings-login-section');
 
+            const floodTabItem = document.getElementById('flood-tab-item');
+
             if (!authState.required) {
                 // No password configured — read-only dashboard, hide everything auth-related
                 if (sendTabItem) sendTabItem.style.display = 'none';
                 if (tracerouteTabItem) tracerouteTabItem.style.display = 'none';
+                if (floodTabItem) floodTabItem.style.display = 'none';
                 if (sendBanner) sendBanner.style.display = 'none';
                 if (tracerouteBanner) tracerouteBanner.style.display = 'none';
                 if (settingsLogin) settingsLogin.style.display = 'none';
@@ -3344,10 +3395,17 @@
                 if (sendBanner) sendBanner.style.display = 'none';
                 if (tracerouteBanner) tracerouteBanner.style.display = 'none';
                 if (settingsLogin) settingsLogin.innerHTML = '<p class="text-success"><i class="bi bi-check-circle"></i> Authenticated — Send Message and Traceroute are enabled.</p>';
+                // Show flood tab only if MeshCore devices are connected
+                if (floodTabItem) {
+                    fetch('/meshcore/devices').then(r => r.json()).then(data => {
+                        floodTabItem.style.display = (data.devices && data.devices.length > 0) ? '' : 'none';
+                    }).catch(() => { floodTabItem.style.display = 'none'; });
+                }
             } else {
                 // Auth required but not authenticated — hide tabs, show login in settings
                 if (sendTabItem) sendTabItem.style.display = 'none';
                 if (tracerouteTabItem) tracerouteTabItem.style.display = 'none';
+                if (floodTabItem) floodTabItem.style.display = 'none';
                 if (sendBanner) sendBanner.style.display = 'block';
                 if (tracerouteBanner) tracerouteBanner.style.display = 'block';
                 if (settingsLogin) settingsLogin.style.display = '';
@@ -3465,6 +3523,85 @@
 
         // Load settings when page loads
         document.addEventListener('DOMContentLoaded', loadSettings);
+
+        // ── Flood Advertisement ─────────────────────────────────
+
+        function loadFloodDevices() {
+            const select = document.getElementById('flood-device-select');
+            const btn = document.getElementById('send-flood-btn');
+            fetch('/meshcore/devices')
+                .then(r => r.json())
+                .then(data => {
+                    select.innerHTML = '';
+                    if (!data.devices || data.devices.length === 0) {
+                        select.innerHTML = '<option value="">No MeshCore devices connected</option>';
+                        btn.disabled = true;
+                        return;
+                    }
+                    data.devices.forEach(d => {
+                        const opt = document.createElement('option');
+                        opt.value = d.device_id;
+                        opt.textContent = d.device_name || d.device_id;
+                        select.appendChild(opt);
+                    });
+                    btn.disabled = false;
+                })
+                .catch(() => {
+                    select.innerHTML = '<option value="">Error loading devices</option>';
+                    btn.disabled = true;
+                });
+        }
+
+        function sendFloodAdvert() {
+            requireAuth(() => {
+                const select = document.getElementById('flood-device-select');
+                const btn = document.getElementById('send-flood-btn');
+                const deviceId = select.value;
+
+                btn.disabled = true;
+                btn.innerHTML = '<span class="loading-spinner"></span> Sending...';
+
+                fetch('/meshcore/flood-advert', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({device_id: deviceId})
+                })
+                .then(r => {
+                    if (r.status === 401) {
+                        authState.authenticated = false;
+                        updateAuthUI();
+                        throw new Error('Authentication required');
+                    }
+                    return r.json();
+                })
+                .then(data => {
+                    if (data.success) {
+                        showAlert('Flood advertisement sent!', 'success');
+                        const status = document.getElementById('flood-status');
+                        if (status) {
+                            const time = new Date(data.flood_time).toLocaleTimeString();
+                            status.innerHTML = `<div class="alert alert-success mt-3">
+                                <i class="bi bi-check-circle"></i> Flood sent from <strong>${data.device_name}</strong> at ${time}
+                            </div>`;
+                        }
+                    } else {
+                        showAlert(data.error || 'Failed to send', 'danger');
+                    }
+                })
+                .catch(err => {
+                    showAlert(err.message || 'Error sending flood', 'danger');
+                })
+                .finally(() => {
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="bi bi-broadcast"></i> Send Flood Advertisement';
+                });
+            });
+        }
+
+        document.addEventListener('DOMContentLoaded', function() {
+            const btn = document.getElementById('send-flood-btn');
+            if (btn) btn.addEventListener('click', sendFloodAdvert);
+        });
 
         // ══════════════════════════════════════════════════════
         // Mesh Topology Graph (D3.js force-directed)
