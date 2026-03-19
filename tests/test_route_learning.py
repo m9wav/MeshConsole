@@ -8,14 +8,17 @@ Tests cover:
 - Adjacency scoring and confidence calculation
 - Thread safety under concurrent writes
 - Integration with decode_route via a minimal mock orchestrator
+- Geographic disambiguation (GeoResolver)
 """
 
 import threading
+import time
 
 import pytest
 
 from meshconsole.database import DatabaseHandler
-from meshconsole.core import RouteAnalyzer
+from meshconsole.core import RouteAnalyzer, GeoResolver
+from meshconsole.models import BackendType
 
 
 # ── Fixtures ──────────────────────────────────────────────────────
@@ -377,3 +380,215 @@ class TestEndToEnd:
         )
         assert ranked_bb[0][0] == 'Bravo'
         assert ranked_bb[0][1] > 0
+
+
+# ══════════════════════════════════════════════════════════════════
+# GeoResolver tests
+# ══════════════════════════════════════════════════════════════════
+
+class TestGeoResolverHaversine:
+    """Haversine distance calculation."""
+
+    def test_same_point(self):
+        assert GeoResolver._haversine(51.5, -0.1, 51.5, -0.1) == 0.0
+
+    def test_known_distance(self):
+        # London to Paris ~340km
+        d = GeoResolver._haversine(51.5074, -0.1278, 48.8566, 2.3522)
+        assert 330 < d < 350
+
+    def test_antipodal(self):
+        d = GeoResolver._haversine(0, 0, 0, 180)
+        assert 20000 < d < 20100
+
+
+class TestGeoResolverScoring:
+    """Geographic candidate scoring phases."""
+
+    def test_no_neighbor_coords(self):
+        geo = GeoResolver()
+        result = geo.score_candidates(['A', 'B'], ['Unknown1'])
+        assert all(conf == 0.0 for _, _, conf in result)
+
+    def test_no_candidate_coords(self):
+        geo = GeoResolver()
+        with geo._lock:
+            geo._coords['Neighbor1'] = (51.5, -0.1)
+        result = geo.score_candidates(['A', 'B'], ['Neighbor1'])
+        assert all(conf == 0.0 for _, _, conf in result)
+
+    def test_phase1_clear_regional_winner(self):
+        """Phase 1: UK node vs Netherlands node near UK neighbors."""
+        geo = GeoResolver()
+        with geo._lock:
+            geo._coords['N1'] = (51.5, -0.1)   # London
+            geo._coords['N2'] = (51.6, 0.0)     # East London
+            geo._coords['Local'] = (51.4, -0.2)  # SW London
+            geo._coords['Far'] = (52.4, 4.9)     # Amsterdam
+        result = geo.score_candidates(['Local', 'Far'], ['N1', 'N2'])
+        assert result[0][0] == 'Local'
+        assert result[0][2] > 0.5
+
+    def test_phase2_different_closest(self):
+        """Phase 2: candidates have different closest neighbors."""
+        geo = GeoResolver()
+        with geo._lock:
+            geo._coords['N1'] = (51.5, -0.1)
+            geo._coords['N2'] = (52.0, 0.5)
+            geo._coords['N3'] = (51.0, -0.5)
+            geo._coords['A'] = (51.4, -0.2)  # closest to N1, N3
+            geo._coords['B'] = (52.1, 0.4)   # closest to N2
+        result = geo.score_candidates(['A', 'B'], ['N1', 'N2', 'N3'])
+        # A is closer to majority of neighbors
+        assert result[0][0] == 'A'
+
+    def test_phase3_route_coherence(self):
+        """Phase 3: smooth route beats detour."""
+        geo = GeoResolver()
+        with geo._lock:
+            geo._coords['Start'] = (51.0, 0.0)
+            geo._coords['Smooth'] = (51.5, 0.5)   # on the way
+            geo._coords['Detour'] = (55.0, 10.0)   # Denmark
+            geo._coords['End'] = (52.0, 1.0)
+        hops = [
+            make_hop('aa', 'Start', 1),
+            make_hop('bb', None, 2, ['Smooth', 'Detour']),
+            make_hop('cc', 'End', 1),
+        ]
+        result = geo.score_candidates(
+            ['Smooth', 'Detour'], ['Start', 'End'], all_hops=hops
+        )
+        assert result[0][0] == 'Smooth'
+        assert result[0][2] > 0
+
+    def test_single_candidate_with_coords(self):
+        """If only one candidate has coords, can't disambiguate."""
+        geo = GeoResolver()
+        with geo._lock:
+            geo._coords['N1'] = (51.5, -0.1)
+            geo._coords['A'] = (51.4, -0.2)
+            # B has no coords
+        result = geo.score_candidates(['A', 'B'], ['N1'])
+        assert all(conf == 0.0 for _, _, conf in result)
+
+
+class TestGeoResolverIntegration:
+    """Integration of GeoResolver with RouteAnalyzer."""
+
+    def test_analyzer_has_geo(self, analyzer):
+        assert hasattr(analyzer, '_geo')
+        assert isinstance(analyzer._geo, GeoResolver)
+
+    def test_geo_breaks_adjacency_tie(self, analyzer):
+        """Geo scoring breaks tie when adjacency counts are equal."""
+        geo = analyzer._geo
+        with geo._lock:
+            geo._coords['Neighbor'] = (51.5, -0.1)
+            geo._coords['Near'] = (51.4, -0.2)
+            geo._coords['Far'] = (52.4, 4.9)
+            geo._last_refresh = time.time()
+
+        ranked, conf = analyzer.resolve_ambiguous_hop_geo(
+            'bb', ['aa'], ['Near', 'Far'],
+            resolved_neighbors=['Neighbor'],
+            backends=[], db_handler=None,
+        )
+        assert ranked[0][0] == 'Near'
+
+    def test_strong_adjacency_beats_geo(self, analyzer):
+        """Strong adjacency evidence should not be overridden by geo."""
+        for _ in range(20):
+            analyzer.learn_route([
+                make_hop('aa', 'Alpha', 1),
+                make_hop('bb', 'Bravo', 1),
+            ])
+
+        geo = analyzer._geo
+        with geo._lock:
+            geo._coords['Alpha'] = (51.5, -0.1)
+            geo._coords['Other'] = (51.4, -0.2)  # closer to Alpha
+            geo._coords['Bravo'] = (55.0, 10.0)   # far from Alpha
+            geo._last_refresh = time.time()
+
+        ranked, conf = analyzer.resolve_ambiguous_hop_geo(
+            'bb', ['aa'], ['Bravo', 'Other'],
+            resolved_neighbors=['Alpha'],
+            backends=[], db_handler=None,
+        )
+        # Adjacency should win
+        assert ranked[0][0] == 'Bravo'
+        assert conf >= 0.7
+
+    def test_no_coords_falls_back_to_adjacency(self, analyzer):
+        """With no coords, geo-enhanced method returns adjacency result."""
+        for _ in range(5):
+            analyzer.learn_route([
+                make_hop('aa', 'Alpha', 1),
+                make_hop('bb', 'Bravo', 1),
+            ])
+
+        ranked, conf = analyzer.resolve_ambiguous_hop_geo(
+            'bb', ['aa'], ['Bravo', 'Other'],
+            resolved_neighbors=['Alpha'],
+            backends=[], db_handler=None,
+        )
+        assert ranked[0][0] == 'Bravo'
+
+
+class TestCoordRefresh:
+    """Coordinate cache refresh from backends."""
+
+    def test_refresh_from_contacts(self):
+        geo = GeoResolver()
+
+        class MockBackend:
+            backend_type = BackendType.MESHCORE
+            _contacts = {
+                'aabb': {'adv_name': 'NodeA', 'adv_lat': 51.5, 'adv_lon': -0.1},
+                'ccdd': {'adv_name': 'NodeB', 'adv_lat': 52.0, 'adv_lon': 0.5},
+            }
+
+        class MockCursor:
+            @staticmethod
+            def execute(q, *a):
+                pass
+
+            @staticmethod
+            def fetchall():
+                return []
+
+        class MockDB:
+            lock = threading.Lock()
+            cursor = MockCursor()
+
+        geo.refresh_coords([MockBackend()], MockDB())
+        assert geo.coord_count == 2
+        assert geo.get_coords('NodeA') == (51.5, -0.1)
+
+    def test_invalid_coords_filtered(self):
+        geo = GeoResolver()
+
+        class MockBackend:
+            backend_type = BackendType.MESHCORE
+            _contacts = {
+                'aabb': {'adv_name': 'Bad', 'adv_lat': 91.0, 'adv_lon': -0.1},
+                'ccdd': {'adv_name': 'Good', 'adv_lat': 52.0, 'adv_lon': 0.5},
+            }
+
+        class MockCursor:
+            @staticmethod
+            def execute(q, *a):
+                pass
+
+            @staticmethod
+            def fetchall():
+                return []
+
+        class MockDB:
+            lock = threading.Lock()
+            cursor = MockCursor()
+
+        geo.refresh_coords([MockBackend()], MockDB())
+        assert geo.coord_count == 1
+        assert geo.get_coords('Bad') is None
+        assert geo.get_coords('Good') == (52.0, 0.5)
