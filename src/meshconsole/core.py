@@ -1782,6 +1782,9 @@ class MeshtasticTool:
         node_ids = set()
         hash_to_node_ids: dict[str, list[str]] = {}  # hash -> list of graph node IDs
 
+        # Ensure GeoResolver has fresh coordinates
+        analyzer._geo._ensure_fresh(self.backends, self.db_handler)
+
         for h in sorted(node_hashes):
             pubkeys = hash_to_pubkeys.get(h, [])
             names = hash_to_names.get(h, [])
@@ -1794,25 +1797,66 @@ class MeshtasticTool:
                 })
                 node_ids.add(nid)
                 hash_to_node_ids.setdefault(h, []).append(nid)
+            elif len(pubkeys) == 1:
+                nid = pubkeys[0].lower()
+                if nid not in node_ids:
+                    nodes.append({
+                        'id': nid, 'hash': h, 'name': names[0],
+                        'confidence': 1.0, 'candidates': 1, 'pubkeys': [pubkeys[0]],
+                    })
+                    node_ids.add(nid)
+                    hash_to_node_ids.setdefault(h, []).append(nid)
             else:
+                # Ambiguous hash — use GeoResolver to rank candidates
+                # Gather neighbor names from adjacency cache
+                neighbor_names = []
+                with analyzer._lock:
+                    for (nh, nbr), cands in analyzer._cache.items():
+                        if nh == h and cands:
+                            # Find resolved neighbor name (unique hash)
+                            nbr_names = hash_to_names.get(nbr, [])
+                            if len(nbr_names) == 1:
+                                neighbor_names.append(nbr_names[0])
+
+                geo_results = analyzer._geo.score_candidates(
+                    names, neighbor_names
+                )
+                # Build a geo-confidence lookup
+                geo_conf = {r[0]: r[2] for r in geo_results}
+                geo_best = geo_results[0][0] if geo_results and geo_results[0][2] > 0 else None
+
                 for pk, name in zip(pubkeys, names):
                     nid = pk.lower()
                     if nid not in node_ids:
-                        confidence = 1.0 if len(pubkeys) == 1 else max(0.3, min(0.85, 1.0 / len(pubkeys)))
+                        conf = geo_conf.get(name, 0.0)
+                        if conf == 0.0:
+                            conf = max(0.3, min(0.85, 1.0 / len(pubkeys)))
                         nodes.append({
                             'id': nid, 'hash': h, 'name': name,
-                            'confidence': round(confidence, 2),
+                            'confidence': round(conf, 2),
                             'candidates': len(pubkeys), 'pubkeys': [pk],
                         })
                         node_ids.add(nid)
                         hash_to_node_ids.setdefault(h, []).append(nid)
 
-        # Build links: expand hash-level edges into node-level edges
+        # Build links: expand hash-level edges into node-level edges.
+        # When a hash has a confident geo-resolved winner, only that
+        # node gets the edges — low-confidence candidates are excluded
+        # so they don't cluster near nodes they aren't actually next to.
+        node_conf = {n['id']: n.get('confidence', 0) for n in nodes}
+
+        def _pick_representatives(nids):
+            """From a set of node IDs sharing a hash, return only the
+            ones that should receive edges.  If any has confidence >= 0.7
+            return only those; otherwise return all."""
+            high = [nid for nid in nids if node_conf.get(nid, 0) >= 0.7]
+            return high if high else nids
+
         links = []
         link_set = set()
         for (ha, hb), count in sorted(edge_counts.items(), key=lambda x: -x[1]):
-            a_nodes = hash_to_node_ids.get(ha, [])
-            b_nodes = hash_to_node_ids.get(hb, [])
+            a_nodes = _pick_representatives(hash_to_node_ids.get(ha, []))
+            b_nodes = _pick_representatives(hash_to_node_ids.get(hb, []))
             for a_id in a_nodes:
                 for b_id in b_nodes:
                     if a_id == b_id:
@@ -1820,7 +1864,6 @@ class MeshtasticTool:
                     link_key = tuple(sorted([a_id, b_id]))
                     if link_key not in link_set:
                         link_set.add(link_key)
-                        # Distribute count across candidate pairs
                         pair_count = max(1, count // (len(a_nodes) * len(b_nodes)))
                         links.append({'source': a_id, 'target': b_id, 'count': pair_count})
 
@@ -1863,8 +1906,8 @@ class MeshtasticTool:
                     # Connect to nearest repeaters (last hops in routes)
                     top_neighbors = sorted(last_hop_counts.items(), key=lambda x: -x[1])[:5]
                     for neighbor_hash, count in top_neighbors:
-                        neighbor_node_ids = hash_to_node_ids.get(neighbor_hash, [])
-                        for nid in neighbor_node_ids:
+                        rep_ids = _pick_representatives(hash_to_node_ids.get(neighbor_hash, []))
+                        for nid in rep_ids:
                             if nid != local_id:
                                 lk = tuple(sorted([local_id, nid]))
                                 if lk not in link_set:

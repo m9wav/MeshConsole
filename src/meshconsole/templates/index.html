@@ -1024,10 +1024,10 @@
                                 <span class="mesh-graph-legend-dot" style="background:#10b981;"></span> Your node
                             </div>
                             <div class="mesh-graph-legend-item">
-                                <span class="mesh-graph-legend-dot" style="background:#2563eb;"></span> Unique (high confidence)
+                                <span class="mesh-graph-legend-dot" style="background:#2563eb;"></span> Resolved (high confidence)
                             </div>
                             <div class="mesh-graph-legend-item">
-                                <span class="mesh-graph-legend-dot" style="background:#d97706;"></span> Ambiguous (multiple candidates)
+                                <span class="mesh-graph-legend-dot" style="background:#d97706;"></span> Ambiguous (low confidence)
                             </div>
                             <div class="mesh-graph-legend-item">
                                 <span class="mesh-graph-legend-dot" style="background:#94a3b8;"></span> Unknown hash
@@ -3565,7 +3565,7 @@
 
             function nodeColor(d) {
                 if (d.is_local) return '#10b981';            // local node, green
-                if (d.confidence >= 0.9) return '#2563eb';   // unique, blue
+                if (d.confidence >= 0.7) return '#2563eb';   // high confidence, blue
                 if (d.confidence > 0) return '#d97706';      // ambiguous, orange
                 return '#94a3b8';                            // unknown, gray
             }
