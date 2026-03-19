@@ -418,8 +418,7 @@ class MeshCoreBackend(MeshBackend):
             from_id = "channel"
             if ": " in text:
                 embedded_name = text.split(": ", 1)[0]
-                # Verify this looks like a name (not too long, no weird chars)
-                if len(embedded_name) <= 32 and embedded_name.replace("-", "").replace("_", "").isalnum():
+                if 0 < len(embedded_name) <= 32:
                     from_name = embedded_name
 
         packet = UnifiedPacket(
@@ -640,7 +639,7 @@ class MeshCoreBackend(MeshBackend):
         # Skip types that have dedicated event handlers to avoid duplicates.
         # These are handled by CONTACT_MSG_RECV, CHANNEL_MSG_RECV,
         # ADVERTISEMENT, ACK respectively.
-        handled_types = {"TXT_MSG", "TEXT_MSG", "GRP_TXT", "ADVERT", "ACK"}
+        handled_types = {"TXT_MSG", "TEXT_MSG", "GRP_TXT", "ADVERT", "ACK", "REQ", "RESPONSE"}
         if payload_type in handled_types:
             return
 

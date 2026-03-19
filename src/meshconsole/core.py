@@ -11,7 +11,7 @@ compatible properties that search the list.
 
 Author: M9WAV
 License: MIT
-Version: 3.2.0
+Version: 3.3.0
 """
 
 import argparse
