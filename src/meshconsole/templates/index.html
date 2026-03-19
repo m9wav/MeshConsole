@@ -3694,7 +3694,10 @@
                             .scale(1.5)
                             .translate(-localNode.x, -localNode.y)
                     );
-                    highlightNodeConnections(localNode);
+                    // Only highlight if not already highlighted (avoid toggle-off)
+                    if (meshGraphState.highlightedNode !== localNode.id) {
+                        highlightNodeConnections(localNode);
+                    }
                     meshGraphState.lockedNode = localNode.id;
                 };
                 // Fire at 2s and 4s — by 4s positions have stabilized
@@ -3825,8 +3828,9 @@
                     // Lock the highlight so hover/zoom events can't clear it
                     meshGraphState.lockedNode = graphNode.id;
                     const applyHighlight = () => {
-                        highlightNodeConnections(graphNode);
-                        // Zoom and pan
+                        if (meshGraphState.highlightedNode !== graphNode.id) {
+                            highlightNodeConnections(graphNode);
+                        }
                         if (meshGraphState.svg && meshGraphState.zoom && graphNode.x !== undefined) {
                             const container = document.getElementById('mesh-graph-container');
                             const w = container.clientWidth;
@@ -3837,8 +3841,7 @@
                                         .translate(w / 2, h / 2)
                                         .scale(2)
                                         .translate(-graphNode.x, -graphNode.y)
-                                )
-                                .on('end', () => highlightNodeConnections(graphNode));
+                                );
                         }
                     };
                     setTimeout(applyHighlight, 200);
