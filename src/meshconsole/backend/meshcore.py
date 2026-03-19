@@ -420,6 +420,7 @@ class MeshCoreBackend(MeshBackend):
                 embedded_name = text.split(": ", 1)[0]
                 if 0 < len(embedded_name) <= 32:
                     from_name = embedded_name
+                    from_id = embedded_name
 
         packet = UnifiedPacket(
             timestamp=timestamp,
