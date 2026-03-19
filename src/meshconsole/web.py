@@ -193,6 +193,15 @@ def create_app(orchestrator):
             packets = packets[::-1]
             paginated_packets = packets[offset:offset + limit]
 
+        # Enrich MeshCore packets with decoded route data
+        for packet in paginated_packets:
+            raw = packet.get('raw_packet', {})
+            if packet.get('backend') == 'meshcore' and isinstance(raw, dict):
+                path = raw.get('path', '')
+                if path and len(path) >= 4:
+                    hash_size = raw.get('path_hash_size', 1) or 1
+                    packet['route_hops'] = orchestrator.decode_route(path, hash_size)
+
         try:
             response_data = {
                 'packets': paginated_packets,
@@ -311,7 +320,7 @@ def create_app(orchestrator):
                 if local_id and nid == local_id:
                     continue
                 # Skip non-node IDs
-                if nid in ('channel', 'broadcast', 'self', 'mc:unknown'):
+                if nid in ('channel', 'broadcast', 'self', 'mc:unknown', 'mc:mesh'):
                     continue
                 # Skip mc: nodes with purely numeric suffixes (pkt_hash artifacts)
                 mc_suffix = nid.removeprefix('mc:')
@@ -436,6 +445,16 @@ def create_app(orchestrator):
         except Exception as e:
             logger.error(f"Error fetching status: {e}")
             return jsonify({'error': str(e), 'connected': False}), 500
+
+    @app.route('/mesh-graph')
+    def get_mesh_graph():
+        """Return graph data for D3.js mesh topology visualization."""
+        try:
+            graph_data = orchestrator.get_mesh_graph_data()
+            return jsonify(graph_data)
+        except Exception as e:
+            logger.error(f"Error fetching mesh graph data: {e}")
+            return jsonify({'error': str(e), 'nodes': [], 'links': []}), 500
 
     @app.route('/stats')
     def get_stats():

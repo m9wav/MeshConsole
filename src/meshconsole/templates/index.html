@@ -13,6 +13,8 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- D3.js for mesh graph visualization -->
+    <script src="https://d3js.org/d3.v7.min.js"></script>
     
     <style>
         :root {
@@ -350,6 +352,33 @@
             color: #cbd5e1 !important;
         }
 
+        /* Route trail (decoded MeshCore path hops) */
+        .route-trail {
+            word-break: break-word;
+            line-height: 1.6;
+        }
+        .route-trail .hop-known {
+            color: #2563eb;
+        }
+        .route-trail .hop-learned {
+            color: #2563eb;
+            opacity: 0.9;
+            border-bottom: 1px dotted #2563eb;
+        }
+        .route-trail .hop-ambiguous {
+            color: #d97706;
+            font-style: italic;
+        }
+        .route-trail .hop-unknown {
+            color: #94a3b8;
+            font-family: monospace;
+            opacity: 0.5;
+        }
+        .route-trail .hop-local {
+            opacity: 0.45;
+            font-size: 0.7rem;
+        }
+
         /* Backend badges */
         .backend-badge {
             font-size: 0.7rem;
@@ -370,6 +399,218 @@
         .backend-status-separator {
             margin: 0 0.5rem;
             opacity: 0.5;
+        }
+
+        /* ── Autocomplete dropdown ─────────────────────────── */
+        .autocomplete-container { position: relative; }
+        .autocomplete-dropdown {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            z-index: 1000;
+            background: white;
+            border: 1px solid var(--border-color);
+            border-radius: 0.375rem;
+            max-height: 300px;
+            overflow-y: auto;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            display: none;
+        }
+        .autocomplete-item {
+            padding: 8px 12px;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .autocomplete-item:hover, .autocomplete-item.active {
+            background: #f0f4ff;
+        }
+        .autocomplete-item .ac-name {
+            font-weight: 500;
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .autocomplete-item .ac-id {
+            font-size: 0.75rem;
+            color: var(--secondary-color);
+            font-family: monospace;
+        }
+        .autocomplete-item .ac-badge {
+            font-size: 0.65rem;
+            padding: 0.1rem 0.4rem;
+            border-radius: 8px;
+            font-weight: 600;
+            flex-shrink: 0;
+        }
+        .theme-dark .autocomplete-dropdown {
+            background: #1e293b;
+            border-color: #475569;
+        }
+        .theme-dark .autocomplete-item:hover,
+        .theme-dark .autocomplete-item.active {
+            background: #334155;
+        }
+        .theme-dark .autocomplete-item .ac-name {
+            color: #f1f5f9;
+        }
+        .theme-dark .autocomplete-item .ac-id {
+            color: #94a3b8;
+        }
+
+        /* ── Mesh Graph ───────────────────────────────────── */
+        .mesh-graph-container {
+            position: relative;
+            width: 100%;
+            height: calc(100vh - 280px);
+            min-height: 500px;
+            border-radius: 15px;
+            overflow: hidden;
+            background: linear-gradient(135deg, #f8fafc 0%, #eef2ff 100%);
+            border: 1px solid var(--border-color);
+        }
+        .mesh-graph-container svg {
+            width: 100%;
+            height: 100%;
+        }
+        .mesh-graph-controls {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            z-index: 10;
+        }
+        .mesh-graph-controls button {
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            background: rgba(255,255,255,0.9);
+            backdrop-filter: blur(4px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            font-size: 1rem;
+            color: var(--dark-color);
+            transition: all 0.2s ease;
+        }
+        .mesh-graph-controls button:hover {
+            background: var(--primary-color);
+            color: white;
+            border-color: var(--primary-color);
+            transform: scale(1.05);
+        }
+        .mesh-graph-legend {
+            position: absolute;
+            bottom: 12px;
+            left: 12px;
+            background: rgba(255,255,255,0.92);
+            backdrop-filter: blur(6px);
+            border-radius: 10px;
+            padding: 10px 14px;
+            font-size: 0.75rem;
+            border: 1px solid var(--border-color);
+            z-index: 10;
+        }
+        .mesh-graph-legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 3px;
+        }
+        .mesh-graph-legend-item:last-child { margin-bottom: 0; }
+        .mesh-graph-legend-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .mesh-graph-stats {
+            position: absolute;
+            top: 12px;
+            left: 12px;
+            background: rgba(255,255,255,0.92);
+            backdrop-filter: blur(6px);
+            border-radius: 10px;
+            padding: 8px 14px;
+            font-size: 0.8rem;
+            border: 1px solid var(--border-color);
+            z-index: 10;
+        }
+        .mesh-graph-empty {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: var(--secondary-color);
+        }
+        .mesh-graph-empty i { font-size: 4rem; opacity: 0.3; margin-bottom: 1rem; }
+        .mesh-graph-tooltip {
+            position: absolute;
+            background: rgba(30, 41, 59, 0.95);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-size: 0.8rem;
+            pointer-events: none;
+            z-index: 20;
+            opacity: 0;
+            transition: opacity 0.15s ease;
+            max-width: 220px;
+        }
+        .mesh-graph-tooltip.visible { opacity: 1; }
+
+        /* Graph node glow on hover */
+        .graph-node:hover { filter: url(#glow); cursor: grab; }
+        .graph-node:active { cursor: grabbing; }
+
+        /* Dark mode graph overrides */
+        .theme-dark .mesh-graph-container {
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            border-color: #475569;
+        }
+        .theme-dark .mesh-graph-controls button {
+            background: rgba(30,41,59,0.9);
+            color: #e2e8f0;
+            border-color: #475569;
+        }
+        .theme-dark .mesh-graph-controls button:hover {
+            background: var(--primary-color);
+            color: white;
+        }
+        .theme-dark .mesh-graph-legend,
+        .theme-dark .mesh-graph-stats {
+            background: rgba(30,41,59,0.92);
+            color: #e2e8f0;
+            border-color: #475569;
+        }
+        .theme-dark .mesh-graph-tooltip {
+            background: rgba(248,250,252,0.95);
+            color: #0f172a;
+        }
+
+        /* Node card graph icon */
+        .node-graph-btn {
+            background: none;
+            border: none;
+            color: var(--primary-color);
+            cursor: pointer;
+            padding: 2px 6px;
+            border-radius: 6px;
+            transition: all 0.2s ease;
+            font-size: 0.9rem;
+        }
+        .node-graph-btn:hover {
+            background: rgba(37, 99, 235, 0.1);
+            transform: scale(1.1);
         }
 
         /* Auth required banner */
@@ -528,6 +769,11 @@
                         <i class="bi bi-people"></i> Network Nodes
                     </button>
                 </li>
+                <li class="nav-item" role="presentation" id="mesh-graph-tab-item" style="display:none;">
+                    <button class="nav-link" id="mesh-graph-tab" data-bs-toggle="tab" data-bs-target="#mesh-graph" type="button" role="tab">
+                        <i class="bi bi-diagram-2"></i> Mesh Graph
+                    </button>
+                </li>
                 <li class="nav-item" role="presentation">
                     <button class="nav-link" id="stats-tab" data-bs-toggle="tab" data-bs-target="#stats" type="button" role="tab">
                         <i class="bi bi-graph-up"></i> Statistics
@@ -618,9 +864,11 @@
                                     <form id="send-message-form">
                                         <div class="mb-3">
                                             <label for="destination-node" class="form-label">Destination Node</label>
-                                            <select class="form-select form-control-modern" id="destination-node" required>
-                                                <option value="">Select a node...</option>
-                                            </select>
+                                            <div class="autocomplete-container">
+                                                <input type="text" class="form-control form-control-modern" id="destination-node" autocomplete="off" placeholder="Search nodes..." required>
+                                                <input type="hidden" id="destination-node-value">
+                                                <div class="autocomplete-dropdown" id="destination-autocomplete"></div>
+                                            </div>
                                             <div class="form-text">Choose the destination node from your network</div>
                                         </div>
                                         <div class="mb-3">
@@ -680,9 +928,11 @@
                                         <div class="row">
                                             <div class="col-md-8">
                                                 <label for="traceroute-destination" class="form-label">Destination Node</label>
-                                                <select class="form-select form-control-modern" id="traceroute-destination" required>
-                                                    <option value="">Select a node...</option>
-                                                </select>
+                                                <div class="autocomplete-container">
+                                                    <input type="text" class="form-control form-control-modern" id="traceroute-destination" autocomplete="off" placeholder="Search nodes..." required>
+                                                    <input type="hidden" id="traceroute-destination-value">
+                                                    <div class="autocomplete-dropdown" id="traceroute-autocomplete"></div>
+                                                </div>
                                             </div>
                                             <div class="col-md-4">
                                                 <label for="hop-limit" class="form-label">Hop Limit</label>
@@ -741,6 +991,52 @@
 
                     <div class="row" id="nodes-container">
                         <!-- Nodes will be loaded here -->
+                    </div>
+                </div>
+
+                <!-- Mesh Graph Tab -->
+                <div class="tab-pane fade" id="mesh-graph" role="tabpanel">
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <h4><i class="bi bi-diagram-2 text-primary"></i> Mesh Topology Graph</h4>
+                            <p class="text-muted">Force-directed visualization of mesh network adjacency patterns</p>
+                        </div>
+                        <div class="col-md-6 text-end">
+                            <button class="btn btn-primary-modern btn-modern" id="refresh-graph">
+                                <i class="bi bi-arrow-clockwise"></i> Refresh Graph
+                            </button>
+                        </div>
+                    </div>
+                    <div class="mesh-graph-container" id="mesh-graph-container">
+                        <!-- SVG and controls injected by JS -->
+                        <div class="mesh-graph-empty" id="mesh-graph-empty">
+                            <i class="bi bi-diagram-2"></i>
+                            <h5>Loading mesh topology...</h5>
+                            <p>Graph data will appear here once route observations are collected.</p>
+                        </div>
+                        <div class="mesh-graph-controls" id="mesh-graph-controls" style="display:none;">
+                            <button onclick="meshGraphZoom(1.3)" title="Zoom In"><i class="bi bi-plus"></i></button>
+                            <button onclick="meshGraphZoom(0.77)" title="Zoom Out"><i class="bi bi-dash"></i></button>
+                            <button onclick="meshGraphReset()" title="Reset View"><i class="bi bi-arrows-fullscreen"></i></button>
+                        </div>
+                        <div class="mesh-graph-legend" id="mesh-graph-legend" style="display:none;">
+                            <div class="mesh-graph-legend-item">
+                                <span class="mesh-graph-legend-dot" style="background:#10b981;"></span> Your node
+                            </div>
+                            <div class="mesh-graph-legend-item">
+                                <span class="mesh-graph-legend-dot" style="background:#2563eb;"></span> Unique (high confidence)
+                            </div>
+                            <div class="mesh-graph-legend-item">
+                                <span class="mesh-graph-legend-dot" style="background:#d97706;"></span> Ambiguous (multiple candidates)
+                            </div>
+                            <div class="mesh-graph-legend-item">
+                                <span class="mesh-graph-legend-dot" style="background:#94a3b8;"></span> Unknown hash
+                            </div>
+                        </div>
+                        <div class="mesh-graph-stats" id="mesh-graph-stats" style="display:none;">
+                            <span id="graph-node-count">0</span> nodes, <span id="graph-link-count">0</span> links
+                        </div>
+                        <div class="mesh-graph-tooltip" id="mesh-graph-tooltip"></div>
                     </div>
                 </div>
 
@@ -1126,6 +1422,10 @@
                         fetchNodes();
                     } else if (target === '#stats') {
                         fetchStats();
+                    } else if (target === '#mesh-graph') {
+                        if (!appState.meshGraphLoaded) {
+                            fetchMeshGraph();
+                        }
                     }
                 });
             });
@@ -1134,6 +1434,16 @@
             document.getElementById('node-search').addEventListener('input', function(e) {
                 filterNodes(e.target.value);
             });
+
+            // Refresh graph button
+            document.getElementById('refresh-graph').addEventListener('click', () => {
+                appState.meshGraphLoaded = false;
+                fetchMeshGraph();
+            });
+
+            // Initialize autocomplete for destination selectors
+            initAutocomplete('destination-node', 'destination-node-value', 'destination-autocomplete');
+            initAutocomplete('traceroute-destination', 'traceroute-destination-value', 'traceroute-autocomplete');
         }
 
         function loadInitialData() {
@@ -1301,6 +1611,8 @@
                 ? packet.hop_limit : 'N/A';
             const hopLabel = (packet.backend === 'meshcore') ? 'Path Length' : 'Hop Limit';
 
+            const routeTrailHtml = renderRouteTrail(packet);
+
             card.innerHTML = `
                 <div class="card-header card-header-modern">
                     <div class="d-flex justify-content-between align-items-center">
@@ -1324,6 +1636,7 @@
                             <i class="bi bi-layers"></i> ${hopLabel}: ${hopDisplay}
                         </div>
                     </div>
+                    ${routeTrailHtml}
                 </div>
             `;
 
@@ -1445,13 +1758,16 @@
                     let traceContent = '';
                     const raw = packet.raw_packet || {};
                     if (packet.backend === 'meshcore') {
-                        const snrVal = (packet.snr !== null && packet.snr !== undefined && packet.snr !== 'N/A') ? `${packet.snr} dB` : '';
-                        const rssiVal = (packet.rssi !== null && packet.rssi !== undefined && packet.rssi !== 'N/A') ? `${packet.rssi} dBm` : '';
-                        const hopLen = (packet.hop_limit !== null && packet.hop_limit !== undefined && packet.hop_limit !== 'N/A') ? `${packet.hop_limit} hops` : '';
-                        const details = [snrVal, rssiVal, hopLen].filter(Boolean).join(' | ');
-                        traceContent = `<p>Trace packet observed on mesh${details ? ': ' + details : ''}</p>`;
-                        if (packet.payload && packet.payload !== 'TRACE' && packet.payload !== 'PATH') {
-                            traceContent += `<p class="text-muted small">${packet.payload}</p>`;
+                        const hopCount = (packet.hop_limit !== null && packet.hop_limit !== undefined && packet.hop_limit !== 'N/A') ? packet.hop_limit : (packet.route_hops ? packet.route_hops.length : '?');
+                        // Show origin and destination from route if available
+                        if (packet.route_hops && packet.route_hops.length >= 2) {
+                            const firstKnown = packet.route_hops.find(h => h.name && h.candidates === 1);
+                            const lastKnown = [...packet.route_hops].reverse().find(h => h.name && h.candidates === 1);
+                            const origin = firstKnown ? firstKnown.name : packet.route_hops[0].hash;
+                            const dest = lastKnown && lastKnown !== firstKnown ? lastKnown.name : packet.route_hops[packet.route_hops.length-1].hash;
+                            traceContent = `<p><i class="bi bi-arrow-right-circle"></i> <strong>${origin}</strong> → <strong>${dest}</strong> <span class="text-muted">(${hopCount} hops)</span></p>`;
+                        } else {
+                            traceContent = `<p>Trace packet: ${hopCount} hops</p>`;
                         }
                     } else {
                         const route = raw.decoded?.traceroute?.route || [];
@@ -1504,6 +1820,71 @@
             }
             // Already a string with content
             return `${value} ${unit}`;
+        }
+
+        function renderRouteTrail(packet) {
+            const hops = packet.route_hops;
+            if (!hops || hops.length < 2) return '';
+
+            // Track seen hashes to detect loops
+            const seen = new Set();
+            // Detect local chain: find common suffix (last N hops that repeat across packets)
+            // Heuristic: last 3 hops are usually the local repeater chain
+            const localStart = Math.max(0, hops.length - 3);
+
+            const hopSpans = hops.map((hop, idx) => {
+                const isLocal = idx >= localStart;
+                const isLoop = seen.has(hop.hash);
+                seen.add(hop.hash);
+
+                const confidence = hop.confidence !== undefined ? hop.confidence : (hop.candidates === 1 ? 1.0 : 0.3);
+                const observations = hop.observations || 0;
+                const confPct = Math.round(confidence * 100);
+
+                let label;
+                let cls;
+                let tooltip = '';
+
+                if (hop.candidates === 0) {
+                    // No match at all
+                    label = hop.hash;
+                    cls = 'hop-unknown';
+                    tooltip = 'Unknown hash ' + hop.hash;
+                } else if (hop.candidates === 1) {
+                    // Unique match
+                    label = hop.name;
+                    cls = 'hop-known';
+                    tooltip = hop.name + ' (unique match)';
+                } else if (confidence > 0.7) {
+                    // Ambiguous but high confidence from learning
+                    label = hop.name;
+                    cls = 'hop-learned';
+                    tooltip = hop.name + ' (' + confPct + '% confidence, ' + observations + ' observations, ' + hop.candidates + ' candidates)';
+                } else if (confidence > 0.3 && hop.name) {
+                    // Medium confidence
+                    label = hop.name.split(',')[0].trim();
+                    cls = 'hop-ambiguous';
+                    const names = (hop.candidate_names || [hop.name]).join(', ');
+                    tooltip = hop.candidates + ' candidates: ' + names + ' (' + confPct + '% confidence)';
+                } else if (hop.name) {
+                    // Low confidence with candidates
+                    label = hop.name.split(',')[0].trim();
+                    cls = 'hop-ambiguous';
+                    tooltip = hop.candidates + ' possible: ' + (hop.candidate_names || [hop.name]).join(', ');
+                } else {
+                    label = hop.hash;
+                    cls = 'hop-unknown';
+                    tooltip = 'Unknown hash ' + hop.hash;
+                }
+
+                if (isLocal) cls += ' hop-local';
+                const loopBadge = isLoop ? '<span title="Node seen earlier in route" style="font-size:0.6rem;vertical-align:super;">↻</span>' : '';
+                return `<span class="${cls}" title="${tooltip}">${label}${loopBadge}</span>`;
+            });
+
+            return `<div class="route-trail text-muted small mt-1" style="font-size: 0.75rem;">
+                <i class="bi bi-signpost-2"></i> ${hopSpans.join(' → ')}
+            </div>`;
         }
 
         function getPortIcon(portName) {
@@ -1606,11 +1987,18 @@
         }
 
         function fetchNodes() {
-            // Fetch node info from dedicated endpoint, then update with recent packet activity
+            // Fetch node info, packet activity, and graph pubkeys in parallel
             Promise.all([
                 fetch('/nodes').then(r => r.json()),
-                fetch('/packets?limit=500&offset=0').then(r => r.json())
-            ]).then(([nodesResponse, packetsResponse]) => {
+                fetch('/packets?limit=500&offset=0').then(r => r.json()),
+                fetch('/mesh-graph').then(r => r.json()).catch(() => ({nodes: []}))
+            ]).then(([nodesResponse, packetsResponse, graphResponse]) => {
+                // Build set of node IDs that exist in the mesh graph
+                const graphNodeIds = new Set();
+                (graphResponse.nodes || []).forEach(gn => {
+                    graphNodeIds.add(gn.id.toLowerCase());
+                });
+                appState.meshGraphNodeIds = graphNodeIds;
                 const nodes = {};
 
                 // First, populate from /nodes endpoint (has all NODEINFO data including shortNames)
@@ -1631,7 +2019,7 @@
                     if (!packet.from_id) return;
 
                     // Skip invalid node IDs
-                    if (packet.from_id === 'channel' || packet.from_id === 'broadcast' || packet.from_id === 'self') return;
+                    if (['channel', 'broadcast', 'self', 'mc:mesh'].includes(packet.from_id)) return;
                     if (packet.from_id.startsWith('mc:')) {
                         const suffix = packet.from_id.slice(3);
                         if (/^\d+$/.test(suffix) || suffix === 'unknown') return;
@@ -1794,12 +2182,21 @@
                 }
                 // For MeshCore nodes, show the pubkey prefix as ID format
                 const nodeIdDisplay = node.id.startsWith('mc:') ? `<i class="bi bi-key"></i> ${node.id}` : `<i class="bi bi-hash"></i> ${node.id}`;
+                // Only show graph button if node is in the mesh graph
+                let graphBtnHtml = '';
+                if (node.backend === 'meshcore' && appState.meshGraphNodeIds) {
+                    const pk = node.id.replace('mc:', '').substring(0, 12).toLowerCase();
+                    if (appState.meshGraphNodeIds.has(pk)) {
+                        graphBtnHtml = `<button class="node-graph-btn" onclick="showNodeInGraph('${node.id}')" title="Show in mesh graph"><i class="bi bi-diagram-2"></i></button>`;
+                    }
+                }
                 nodeCard.innerHTML = `
                     <div class="card card-modern">
                         <div class="card-body">
                             <div class="d-flex align-items-center mb-3">
                                 <div class="status-indicator status-online"></div>
                                 <h6 class="mb-0 node-name-clickable" onclick="filterByNode('${node.id}', '${nodeNameEscaped}')" title="View traffic from this node">${node.name}${shortNameDisplay}${nodeBackendBadge}</h6>
+                                ${graphBtnHtml}
                             </div>
                             <p class="text-muted small mb-2">
                                 ${nodeIdDisplay}
@@ -1815,24 +2212,135 @@
         }
 
         function populateNodeSelects(nodes) {
-            const selects = ['destination-node', 'traceroute-destination'];
-            selects.forEach(selectId => {
-                const select = document.getElementById(selectId);
-                select.innerHTML = '<option value="">Select a node...</option>';
-                nodes.forEach(node => {
-                    const option = document.createElement('option');
-                    option.value = node.id;
-                    option.textContent = `${node.name} (${node.id})`;
-                    select.appendChild(option);
+            // No longer uses <select> — autocomplete is driven from appState.sortedNodes
+            // This function is kept as a no-op for compatibility
+        }
+
+        // ── Autocomplete system ─────────────────────────────────
+        function initAutocomplete(inputId, hiddenId, dropdownId) {
+            const input = document.getElementById(inputId);
+            const hidden = document.getElementById(hiddenId);
+            const dropdown = document.getElementById(dropdownId);
+            let activeIndex = -1;
+
+            function getBackendBadgeHtml(backend) {
+                if (backend === 'meshcore') return '<span class="ac-badge badge bg-warning text-dark">MC</span>';
+                if (backend === 'meshtastic') return '<span class="ac-badge badge bg-primary">MT</span>';
+                return '';
+            }
+
+            function showDropdown(items) {
+                dropdown.innerHTML = '';
+                activeIndex = -1;
+                if (items.length === 0) {
+                    dropdown.style.display = 'none';
+                    return;
+                }
+                items.slice(0, 10).forEach((node, idx) => {
+                    const div = document.createElement('div');
+                    div.className = 'autocomplete-item';
+                    div.dataset.value = node.id;
+                    div.dataset.name = node.name;
+                    div.dataset.index = idx;
+                    div.innerHTML = `
+                        <span class="ac-name">${node.name}</span>
+                        ${getBackendBadgeHtml(node.backend)}
+                        <span class="ac-id">${node.id}</span>
+                    `;
+                    div.addEventListener('mousedown', (e) => {
+                        e.preventDefault();
+                        selectItem(node);
+                    });
+                    dropdown.appendChild(div);
                 });
+                dropdown.style.display = 'block';
+            }
+
+            function selectItem(node) {
+                input.value = node.name;
+                hidden.value = node.id;
+                input.dataset.selectedId = node.id;
+                dropdown.style.display = 'none';
+                activeIndex = -1;
+            }
+
+            function filterAndShow() {
+                const term = input.value.toLowerCase().trim();
+                if (!term) {
+                    // Show all nodes (top 10)
+                    showDropdown(appState.sortedNodes || []);
+                    return;
+                }
+                const filtered = (appState.sortedNodes || []).filter(node =>
+                    (node.name && node.name.toLowerCase().includes(term)) ||
+                    (node.id && node.id.toLowerCase().includes(term)) ||
+                    (node.shortName && node.shortName.toLowerCase().includes(term))
+                );
+                showDropdown(filtered);
+            }
+
+            input.addEventListener('input', () => {
+                // Clear selection when user types
+                hidden.value = '';
+                input.dataset.selectedId = '';
+                filterAndShow();
             });
+
+            input.addEventListener('focus', () => {
+                filterAndShow();
+            });
+
+            input.addEventListener('blur', () => {
+                // Delay to allow click events on dropdown items
+                setTimeout(() => {
+                    dropdown.style.display = 'none';
+                }, 200);
+            });
+
+            input.addEventListener('keydown', (e) => {
+                const items = dropdown.querySelectorAll('.autocomplete-item');
+                if (items.length === 0) return;
+
+                if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    activeIndex = Math.min(activeIndex + 1, items.length - 1);
+                    updateActive(items);
+                } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    activeIndex = Math.max(activeIndex - 1, 0);
+                    updateActive(items);
+                } else if (e.key === 'Enter') {
+                    e.preventDefault();
+                    if (activeIndex >= 0 && activeIndex < items.length) {
+                        const item = items[activeIndex];
+                        const node = (appState.sortedNodes || []).find(n => n.id === item.dataset.value);
+                        if (node) selectItem(node);
+                    } else if (items.length === 1) {
+                        // Auto-select single match
+                        const node = (appState.sortedNodes || []).find(n => n.id === items[0].dataset.value);
+                        if (node) selectItem(node);
+                    }
+                } else if (e.key === 'Escape') {
+                    dropdown.style.display = 'none';
+                    activeIndex = -1;
+                }
+            });
+
+            function updateActive(items) {
+                items.forEach((item, idx) => {
+                    item.classList.toggle('active', idx === activeIndex);
+                });
+                if (activeIndex >= 0 && items[activeIndex]) {
+                    items[activeIndex].scrollIntoView({ block: 'nearest' });
+                }
+            }
         }
 
         function sendMessage(event) {
             event.preventDefault();
             
             requireAuth(() => {
-                const destination = document.getElementById('destination-node').value;
+                const destination = document.getElementById('destination-node-value').value || document.getElementById('destination-node').dataset.selectedId;
                 const message = document.getElementById('message-text').value;
                 const wantAck = document.getElementById('want-ack').checked;
                 
@@ -1901,7 +2409,7 @@
             event.preventDefault();
             
             requireAuth(() => {
-                const destination = document.getElementById('traceroute-destination').value;
+                const destination = document.getElementById('traceroute-destination-value').value || document.getElementById('traceroute-destination').dataset.selectedId;
                 const hopLimit = document.getElementById('hop-limit').value;
                 
                 if (!destination) {
@@ -1981,8 +2489,42 @@
             
             if (data.success) {
                 let resultsHtml = '';
-                
-                // Handle direct connection
+
+                // Handle MeshCore responses (different format)
+                if (data.backend === 'meshcore') {
+                    const route = data.route || [];
+                    const msg = data.message || '';
+                    if (msg.includes('Direct connection')) {
+                        resultsHtml = `
+                            <div class="card card-modern">
+                                <div class="card-header card-header-modern">
+                                    <h6 class="mb-0"><i class="bi bi-check-circle text-success"></i> Direct Connection</h6>
+                                </div>
+                                <div class="card-body">
+                                    <div class="alert alert-success alert-modern">
+                                        <i class="bi bi-lightning-charge"></i>
+                                        <strong>Direct connection</strong> — no intermediate hops detected.
+                                    </div>
+                                </div>
+                            </div>`;
+                    } else {
+                        const routeHtml = route.map((r, i) => `
+                            <div class="traceroute-hop">
+                                <strong>Hop ${i+1}:</strong> ${r.node} ${r.snr ? '(SNR: ' + r.snr + ' dB)' : ''}
+                            </div>`).join('');
+                        resultsHtml = `
+                            <div class="card card-modern">
+                                <div class="card-header card-header-modern">
+                                    <h6 class="mb-0"><i class="bi bi-check-circle text-success"></i> Traceroute Results (${route.length} hops)</h6>
+                                </div>
+                                <div class="card-body">${routeHtml || '<p class="text-muted">Path data received.</p>'}</div>
+                            </div>`;
+                    }
+                    container.innerHTML = resultsHtml;
+                    return;
+                }
+
+                // Handle Meshtastic direct connection
                 if (data.is_direct) {
                     resultsHtml = `
                         <div class="card card-modern">
@@ -2293,6 +2835,11 @@
                         if (data.local_node_id) {
                             appState.localNodeId = data.local_node_id;
                         }
+
+                        // Show/hide Mesh Graph tab based on MeshCore backend presence
+                        const hasMeshCore = entries.some(e => e.type === 'meshcore');
+                        const graphTabItem = document.getElementById('mesh-graph-tab-item');
+                        if (graphTabItem) graphTabItem.style.display = hasMeshCore ? '' : 'none';
 
                         // v3.2.0: render one line per connected device
                         const devicesDisplay = document.getElementById('devices-display');
@@ -2918,6 +3465,395 @@
 
         // Load settings when page loads
         document.addEventListener('DOMContentLoaded', loadSettings);
+
+        // ══════════════════════════════════════════════════════
+        // Mesh Topology Graph (D3.js force-directed)
+        // ══════════════════════════════════════════════════════
+        let meshGraphState = {
+            svg: null,
+            simulation: null,
+            zoom: null,
+            g: null,          // main group inside SVG
+            nodeEls: null,
+            linkEls: null,
+            labelEls: null,
+            data: null,
+            highlightedNode: null,
+        };
+
+        function fetchMeshGraph() {
+            fetch('/mesh-graph')
+                .then(r => r.json())
+                .then(data => {
+                    appState.meshGraphLoaded = true;
+                    meshGraphState.data = data;
+                    renderMeshGraph(data);
+                })
+                .catch(err => {
+                    console.error('Error fetching mesh graph:', err);
+                    document.getElementById('mesh-graph-empty').innerHTML = `
+                        <i class="bi bi-exclamation-triangle"></i>
+                        <h5>Failed to load graph data</h5>
+                        <p>Make sure MeshCore routes have been observed.</p>
+                    `;
+                });
+        }
+
+        function renderMeshGraph(data) {
+            const container = document.getElementById('mesh-graph-container');
+            const emptyEl = document.getElementById('mesh-graph-empty');
+            const controlsEl = document.getElementById('mesh-graph-controls');
+            const legendEl = document.getElementById('mesh-graph-legend');
+            const statsEl = document.getElementById('mesh-graph-stats');
+            const tooltip = document.getElementById('mesh-graph-tooltip');
+
+            if (!data.nodes || data.nodes.length === 0) {
+                emptyEl.style.display = '';
+                controlsEl.style.display = 'none';
+                legendEl.style.display = 'none';
+                statsEl.style.display = 'none';
+                return;
+            }
+
+            emptyEl.style.display = 'none';
+            controlsEl.style.display = '';
+            legendEl.style.display = '';
+            statsEl.style.display = '';
+
+            document.getElementById('graph-node-count').textContent = data.nodes.length;
+            document.getElementById('graph-link-count').textContent = data.links.length;
+
+            // Remove old SVG if present
+            const oldSvg = container.querySelector('svg');
+            if (oldSvg) oldSvg.remove();
+
+            const width = container.clientWidth;
+            const height = container.clientHeight;
+
+            const svg = d3.select(container)
+                .append('svg')
+                .attr('width', width)
+                .attr('height', height);
+
+            // Glow filter
+            const defs = svg.append('defs');
+            const filter = defs.append('filter').attr('id', 'glow');
+            filter.append('feGaussianBlur').attr('stdDeviation', '3').attr('result', 'coloredBlur');
+            const feMerge = filter.append('feMerge');
+            feMerge.append('feMergeNode').attr('in', 'coloredBlur');
+            feMerge.append('feMergeNode').attr('in', 'SourceGraphic');
+
+            // Zoom group
+            const g = svg.append('g');
+
+            const zoomBehavior = d3.zoom()
+                .scaleExtent([0.15, 6])
+                .on('zoom', (event) => {
+                    g.attr('transform', event.transform);
+                });
+
+            svg.call(zoomBehavior);
+
+            // Compute scales
+            const maxCount = d3.max(data.links, d => d.count) || 1;
+            const maxConn = d3.max(data.nodes, d => d.connections) || 1;
+
+            const linkWidthScale = d3.scaleLinear().domain([1, maxCount]).range([1, 6]);
+            const linkOpacityScale = d3.scaleLinear().domain([1, maxCount]).range([0.2, 0.8]);
+            const nodeRadiusScale = d3.scaleSqrt().domain([1, maxConn]).range([6, 22]);
+            meshGraphState.nodeRadiusScale = nodeRadiusScale;
+
+            function nodeColor(d) {
+                if (d.is_local) return '#10b981';            // local node, green
+                if (d.confidence >= 0.9) return '#2563eb';   // unique, blue
+                if (d.confidence > 0) return '#d97706';      // ambiguous, orange
+                return '#94a3b8';                            // unknown, gray
+            }
+
+            // Force simulation
+            const simulation = d3.forceSimulation(data.nodes)
+                .force('link', d3.forceLink(data.links).id(d => d.id).distance(80))
+                .force('charge', d3.forceManyBody().strength(-200))
+                .force('center', d3.forceCenter(width / 2, height / 2))
+                .force('collision', d3.forceCollide().radius(d => nodeRadiusScale(d.connections) + 4));
+
+            // Links
+            const linkEls = g.append('g')
+                .attr('class', 'links')
+                .selectAll('line')
+                .data(data.links)
+                .enter().append('line')
+                .attr('stroke', '#94a3b8')
+                .attr('stroke-width', d => linkWidthScale(d.count))
+                .attr('stroke-opacity', d => linkOpacityScale(d.count))
+                .attr('stroke-linecap', 'round');
+
+            // Nodes
+            const nodeEls = g.append('g')
+                .attr('class', 'nodes')
+                .selectAll('circle')
+                .data(data.nodes)
+                .enter().append('circle')
+                .attr('class', 'graph-node')
+                .attr('r', d => nodeRadiusScale(d.connections))
+                .attr('fill', d => nodeColor(d))
+                .attr('stroke', '#ffffff')
+                .attr('stroke-width', 2)
+                .call(d3.drag()
+                    .on('start', dragStarted)
+                    .on('drag', dragged)
+                    .on('end', dragEnded));
+
+            // Hover: show tooltip
+            nodeEls
+                .on('mouseover', function(event, d) {
+                    d3.select(this).attr('stroke', '#0f172a').attr('stroke-width', 3);
+                    tooltip.innerHTML = `
+                        <strong>${d.name}</strong><br>
+                        <span style="opacity:0.7">Hash: ${d.id}</span><br>
+                        Connections: ${d.connections}<br>
+                        ${d.candidates > 1 ? `Candidates: ${d.candidates}<br>` : ''}
+                        Confidence: ${Math.round(d.confidence * 100)}%
+                    `;
+                    tooltip.classList.add('visible');
+                })
+                .on('mousemove', function(event) {
+                    const rect = container.getBoundingClientRect();
+                    tooltip.style.left = (event.clientX - rect.left + 12) + 'px';
+                    tooltip.style.top = (event.clientY - rect.top - 10) + 'px';
+                })
+                .on('mouseout', function() {
+                    d3.select(this).attr('stroke', '#ffffff').attr('stroke-width', 2);
+                    tooltip.classList.remove('visible');
+                })
+                .on('click', function(event, d) {
+                    meshGraphState.lockedNode = null; // Clear lock on direct click
+                    highlightNodeConnections(d);
+                });
+
+            // Labels (shown on hover via CSS proximity, but also visible for hub nodes)
+            const labelEls = g.append('g')
+                .attr('class', 'labels')
+                .selectAll('text')
+                .data(data.nodes)
+                .enter().append('text')
+                .text(d => d.name !== d.id ? d.name : '')
+                .attr('text-anchor', 'middle')
+                .attr('dy', d => -nodeRadiusScale(d.connections) - 4)
+                .attr('font-size', '10px')
+                .attr('fill', '#475569')
+                .attr('font-weight', '500')
+                .attr('pointer-events', 'none')
+                .style('opacity', d => d.connections >= maxConn * 0.5 ? 0.9 : 0);
+
+            // Show labels on node hover
+            nodeEls.on('mouseover.label', function(event, d) {
+                labelEls.filter(l => l.id === d.id).style('opacity', 1);
+                // Also show labels for connected nodes
+                const connected = new Set();
+                data.links.forEach(link => {
+                    const sId = typeof link.source === 'object' ? link.source.id : link.source;
+                    const tId = typeof link.target === 'object' ? link.target.id : link.target;
+                    if (sId === d.id) connected.add(tId);
+                    if (tId === d.id) connected.add(sId);
+                });
+                labelEls.filter(l => connected.has(l.id)).style('opacity', 0.7);
+            });
+            nodeEls.on('mouseout.label', function(event, d) {
+                // Don't hide labels if a node is locked (jumped from nodes tab) or highlighted
+                if (meshGraphState.lockedNode || meshGraphState.highlightedNode) return;
+                labelEls.style('opacity', l => l.connections >= maxConn * 0.5 ? 0.9 : 0);
+            });
+
+            simulation.on('tick', () => {
+                linkEls
+                    .attr('x1', d => d.source.x)
+                    .attr('y1', d => d.source.y)
+                    .attr('x2', d => d.target.x)
+                    .attr('y2', d => d.target.y);
+                nodeEls
+                    .attr('cx', d => d.x)
+                    .attr('cy', d => d.y);
+                labelEls
+                    .attr('x', d => d.x)
+                    .attr('y', d => d.y);
+            });
+
+            // Center on local node after simulation settles
+            const localNode = data.nodes.find(n => n.is_local);
+            if (localNode) {
+                const centerOnLocal = () => {
+                    if (localNode.x !== undefined) {
+                        svg.transition().duration(600).call(
+                            zoom.transform,
+                            d3.zoomIdentity
+                                .translate(width / 2, height / 2)
+                                .scale(1.2)
+                                .translate(-localNode.x, -localNode.y)
+                        );
+                        highlightNodeConnections(localNode);
+                    }
+                };
+                setTimeout(centerOnLocal, 1500);
+            }
+
+            function dragStarted(event, d) {
+                if (!event.active) simulation.alphaTarget(0.3).restart();
+                d.fx = d.x;
+                d.fy = d.y;
+            }
+
+            function dragged(event, d) {
+                d.fx = event.x;
+                d.fy = event.y;
+            }
+
+            function dragEnded(event, d) {
+                if (!event.active) simulation.alphaTarget(0);
+                d.fx = null;
+                d.fy = null;
+            }
+
+            // Store refs
+            meshGraphState.svg = svg;
+            meshGraphState.simulation = simulation;
+            meshGraphState.zoom = zoomBehavior;
+            meshGraphState.g = g;
+            meshGraphState.nodeEls = nodeEls;
+            meshGraphState.linkEls = linkEls;
+            meshGraphState.labelEls = labelEls;
+        }
+
+        function highlightNodeConnections(d) {
+            if (!meshGraphState.data) return;
+            const data = meshGraphState.data;
+            const isHighlighted = meshGraphState.highlightedNode === d.id;
+
+            if (isHighlighted) {
+                // Unhighlight all
+                meshGraphState.highlightedNode = null;
+                meshGraphState.nodeEls.attr('opacity', 1);
+                if (meshGraphState.nodeRadiusScale) {
+                    meshGraphState.nodeEls.attr('r', n => meshGraphState.nodeRadiusScale(n.connections));
+                }
+                meshGraphState.linkEls.attr('opacity', l => {
+                    const maxCount = d3.max(data.links, d => d.count) || 1;
+                    return d3.scaleLinear().domain([1, maxCount]).range([0.2, 0.8])(l.count);
+                });
+                meshGraphState.labelEls
+                    .style('opacity', l => {
+                        const maxConn = d3.max(data.nodes, d => d.connections) || 1;
+                        return l.connections >= maxConn * 0.5 ? 0.9 : 0;
+                    })
+                    .style('font-weight', 'normal')
+                    .style('font-size', '10px');
+                return;
+            }
+
+            meshGraphState.highlightedNode = d.id;
+            const connected = new Set([d.id]);
+            data.links.forEach(link => {
+                const sId = typeof link.source === 'object' ? link.source.id : link.source;
+                const tId = typeof link.target === 'object' ? link.target.id : link.target;
+                if (sId === d.id) connected.add(tId);
+                if (tId === d.id) connected.add(sId);
+            });
+
+            meshGraphState.nodeEls.attr('opacity', n => connected.has(n.id) ? 1 : 0.15);
+            meshGraphState.nodeEls.attr('r', n => {
+                const baseR = meshGraphState.nodeRadiusScale ? meshGraphState.nodeRadiusScale(n.connections) : 6;
+                return n.id === d.id ? baseR * 1.4 : baseR;
+            });
+            meshGraphState.linkEls.attr('opacity', l => {
+                const sId = typeof l.source === 'object' ? l.source.id : l.source;
+                const tId = typeof l.target === 'object' ? l.target.id : l.target;
+                return (sId === d.id || tId === d.id) ? 0.9 : 0.05;
+            });
+            meshGraphState.labelEls
+                .style('opacity', l => connected.has(l.id) ? 1 : 0)
+                .style('font-weight', l => l.id === d.id ? 'bold' : 'normal')
+                .style('font-size', l => l.id === d.id ? '13px' : '10px');
+        }
+
+        function meshGraphZoom(factor) {
+            if (!meshGraphState.svg || !meshGraphState.zoom) return;
+            meshGraphState.svg.transition().duration(300).call(
+                meshGraphState.zoom.scaleBy, factor
+            );
+        }
+
+        function meshGraphReset() {
+            if (!meshGraphState.svg || !meshGraphState.zoom) return;
+            const container = document.getElementById('mesh-graph-container');
+            meshGraphState.svg.transition().duration(500).call(
+                meshGraphState.zoom.transform,
+                d3.zoomIdentity.translate(container.clientWidth / 2, container.clientHeight / 2).scale(1).translate(-container.clientWidth / 2, -container.clientHeight / 2)
+            );
+            // Also unhighlight
+            meshGraphState.highlightedNode = null;
+            if (meshGraphState.nodeEls) meshGraphState.nodeEls.attr('opacity', 1);
+            if (meshGraphState.linkEls) {
+                const maxCount = meshGraphState.data ? d3.max(meshGraphState.data.links, d => d.count) || 1 : 1;
+                meshGraphState.linkEls.attr('opacity', l => d3.scaleLinear().domain([1, maxCount]).range([0.2, 0.8])(l.count));
+            }
+        }
+
+        function showNodeInGraph(nodeId) {
+            // Switch to Mesh Graph tab
+            const graphTab = document.getElementById('mesh-graph-tab');
+            const tab = new bootstrap.Tab(graphTab);
+            tab.show();
+
+            // Load graph if needed, then highlight
+            const doHighlight = () => {
+                if (!meshGraphState.data) return;
+                // Find node by ID (mc: prefix) — try to match hash
+                // MeshCore nodeId is like mc:abcdef... — the graph uses first 2 hex chars of pubkey
+                const data = meshGraphState.data;
+                // We may not have a direct mapping, so try matching by name
+                const nodeName = (appState.nodes[nodeId] || {}).name || '';
+                const pubkeyPrefix = nodeId.replace('mc:', '').substring(0, 12).toLowerCase();
+                // Match by node ID (now uses 12-char pubkey prefix)
+                const graphNode = data.nodes.find(n => n.id === pubkeyPrefix) ||
+                    data.nodes.find(n => n.name === nodeName);
+                if (graphNode) {
+                    // Lock the highlight so hover/zoom events can't clear it
+                    meshGraphState.lockedNode = graphNode.id;
+                    const applyHighlight = () => {
+                        highlightNodeConnections(graphNode);
+                        // Zoom and pan
+                        if (meshGraphState.svg && meshGraphState.zoom && graphNode.x !== undefined) {
+                            const container = document.getElementById('mesh-graph-container');
+                            const w = container.clientWidth;
+                            const h = container.clientHeight;
+                            meshGraphState.svg.transition().duration(800)
+                                .call(meshGraphState.zoom.transform,
+                                    d3.zoomIdentity
+                                        .translate(w / 2, h / 2)
+                                        .scale(2)
+                                        .translate(-graphNode.x, -graphNode.y)
+                                )
+                                .on('end', () => highlightNodeConnections(graphNode));
+                        }
+                    };
+                    setTimeout(applyHighlight, 200);
+                    setTimeout(applyHighlight, 800);
+                    setTimeout(applyHighlight, 1500);
+                }
+            };
+
+            // Always refresh graph data when jumping to a specific node
+            fetch('/mesh-graph')
+                .then(r => r.json())
+                .then(data => {
+                    appState.meshGraphLoaded = true;
+                    meshGraphState.data = data;
+                    renderMeshGraph(data);
+                    // Wait for simulation to settle before zooming
+                    setTimeout(doHighlight, 800);
+                    setTimeout(doHighlight, 1500);
+                });
+        }
     </script>
 
     <!-- Authentication Modal -->

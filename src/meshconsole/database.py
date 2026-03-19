@@ -14,6 +14,7 @@ import logging
 import sqlite3
 import threading
 from datetime import datetime, timedelta
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,22 @@ class DatabaseHandler:
             self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_packets_to_id ON packets(to_id)')
             self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_packets_port_name ON packets(port_name)')
             self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_packets_timestamp ON packets(timestamp DESC)')
+
+            # Route adjacency learning table (v3.3.0)
+            self.cursor.execute('''
+                CREATE TABLE IF NOT EXISTS route_adjacency (
+                    node_hash TEXT NOT NULL,
+                    neighbor_hash TEXT NOT NULL,
+                    node_candidate TEXT NOT NULL,
+                    count INTEGER DEFAULT 1,
+                    last_seen TEXT,
+                    PRIMARY KEY (node_hash, neighbor_hash, node_candidate)
+                )
+            ''')
+            self.cursor.execute(
+                'CREATE INDEX IF NOT EXISTS idx_route_adj_lookup '
+                'ON route_adjacency(node_hash, neighbor_hash)'
+            )
 
             self.conn.commit()
             logger.info("Database initialized.")
@@ -443,6 +460,46 @@ class DatabaseHandler:
                 messages.append(hourly_data.get(hour_key, {}).get('messages', 0))
 
             return hours, packets, messages
+
+    # ── Route adjacency learning (v3.3.0) ─────────────────────────
+
+    def batch_upsert_adjacency(self, rows: list[tuple[str, str, str, str]]) -> None:
+        """Batch upsert adjacency observations.
+
+        Args:
+            rows: List of (node_hash, neighbor_hash, node_candidate, timestamp) tuples.
+        """
+        if not rows:
+            return
+        with self.lock:
+            try:
+                self.cursor.executemany(
+                    '''INSERT INTO route_adjacency (node_hash, neighbor_hash, node_candidate, count, last_seen)
+                       VALUES (?, ?, ?, 1, ?)
+                       ON CONFLICT(node_hash, neighbor_hash, node_candidate)
+                       DO UPDATE SET count = count + 1, last_seen = excluded.last_seen''',
+                    rows,
+                )
+                self.conn.commit()
+            except sqlite3.Error as e:
+                logger.error(f"Failed to upsert route adjacency: {e}")
+
+    def load_adjacency_all(self) -> list[tuple[str, str, str, int]]:
+        """Load all adjacency records for building the in-memory cache.
+
+        Returns:
+            List of (node_hash, neighbor_hash, node_candidate, count) tuples.
+        """
+        with self.lock:
+            try:
+                self.cursor.execute(
+                    'SELECT node_hash, neighbor_hash, node_candidate, count '
+                    'FROM route_adjacency'
+                )
+                return self.cursor.fetchall()
+            except sqlite3.Error as e:
+                logger.error(f"Failed to load route adjacency: {e}")
+                return []
 
     def close(self):
         """Close the database connection."""
