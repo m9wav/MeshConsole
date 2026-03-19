@@ -1639,17 +1639,50 @@ class MeshtasticTool:
         if not path_hex:
             return []
 
-        # Build lookup from all MeshCore backend contacts
+        # Build lookup from live contacts + historical NODEINFO packets.
+        # Live contacts take priority; DB fills gaps for nodes not currently
+        # in the contacts cache.  For hash_size >= 2, collisions are rare
+        # so most hops resolve uniquely.
         lookup: dict[str, list[str]] = {}
+        seen_keys: set[str] = set()  # track full keys to avoid duplicates
+
+        # Source 1: live MeshCore contacts
         for backend in self.backends:
             if backend.backend_type == BackendType.MESHCORE:
                 for prefix, contact in backend._contacts.items():
-                    # Hash is first N bytes of the public key
                     full_key = contact.get('_full_pub_key', '') or contact.get('public_key', '')
                     if full_key and len(full_key) >= hash_size * 2:
                         h = full_key[:hash_size * 2].lower()
                         name = contact.get('adv_name', '') or prefix
                         lookup.setdefault(h, []).append(name)
+                        seen_keys.add(full_key.lower())
+
+        # Source 2: historical NODEINFO packets (fills gaps)
+        try:
+            with self.db_handler.lock:
+                self.db_handler.cursor.execute(
+                    "SELECT DISTINCT raw_packet FROM packets "
+                    "WHERE port_name IN ('NODEINFO','NODEINFO_APP') "
+                    "AND backend='meshcore' ORDER BY timestamp DESC"
+                )
+                db_rows = self.db_handler.cursor.fetchall()
+        except Exception:
+            db_rows = []
+
+        for (raw_json,) in db_rows:
+            try:
+                raw = json.loads(raw_json) if isinstance(raw_json, str) else raw_json
+                full_key = raw.get('public_key', '')
+                if not full_key or full_key.lower() in seen_keys:
+                    continue
+                if len(full_key) >= hash_size * 2:
+                    h = full_key[:hash_size * 2].lower()
+                    name = raw.get('adv_name', '')
+                    if name:
+                        lookup.setdefault(h, []).append(name)
+                        seen_keys.add(full_key.lower())
+            except (json.JSONDecodeError, TypeError):
+                pass
 
         # Phase 1: basic hash lookup
         step = hash_size * 2
