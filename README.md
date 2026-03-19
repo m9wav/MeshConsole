@@ -15,6 +15,8 @@
 
 ## What's New
 
+**v3.5.0** -- Geographic route intelligence: three-phase geo-disambiguation for hash collisions, cascading resolution, confidence-based graph colouring, MeshCore flood advertisement tab
+
 **v3.4.0** -- Route intelligence: decoded path trails, ML route learning, D3.js mesh topology graph, node search autocomplete
 
 **v3.3.0** -- Auth UX, routing noise filter, cleaner UI
