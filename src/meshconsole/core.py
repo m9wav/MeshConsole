@@ -92,6 +92,246 @@ def require_auth(f):
 
 
 # ══════════════════════════════════════════════════════════════════
+# GeoResolver — coordinate-based hash collision disambiguation
+# ══════════════════════════════════════════════════════════════════
+
+class GeoResolver:
+    """Geographic disambiguation for 1-byte MeshCore path hash collisions.
+
+    Uses node coordinates from live MeshCore contacts and historical
+    NODEINFO packets to score candidates based on proximity to resolved
+    neighbors.  Three-phase scoring with increasing cost and decreasing
+    confidence thresholds:
+
+      Phase 1 — Regional clustering (avg distance to all neighbors)
+      Phase 2 — Nearest-k neighbours + different-closest check
+      Phase 3 — Route coherence (total route distance with substitution)
+
+    Thread-safe.  Coordinate cache refreshes on a 5-minute TTL.
+    """
+
+    _COORD_TTL = 300  # seconds
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._coords: dict[str, tuple[float, float]] = {}
+        self._last_refresh: float = 0.0
+
+    # ── Haversine ──────────────────────────────────────────────
+
+    @staticmethod
+    def _haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+        """Great-circle distance in km between two (lat, lon) points."""
+        import math
+        R = 6371.0
+        dlat = math.radians(lat2 - lat1)
+        dlon = math.radians(lon2 - lon1)
+        a = (math.sin(dlat / 2) ** 2
+             + math.cos(math.radians(lat1))
+             * math.cos(math.radians(lat2))
+             * math.sin(dlon / 2) ** 2)
+        return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+    # ── Coordinate cache ───────────────────────────────────────
+
+    def refresh_coords(self, backends: list, db_handler) -> None:
+        """Rebuild the name → (lat, lon) cache from live contacts + DB."""
+        new_coords: dict[str, tuple[float, float]] = {}
+
+        # Source 1: live MeshCore contacts
+        for b in backends:
+            if b.backend_type == BackendType.MESHCORE:
+                for _prefix, contact in getattr(b, '_contacts', {}).items():
+                    name = contact.get('adv_name', '')
+                    lat = contact.get('adv_lat')
+                    lon = contact.get('adv_lon')
+                    if name and lat is not None and lon is not None:
+                        try:
+                            lat_f, lon_f = float(lat), float(lon)
+                            if abs(lat_f) <= 90 and abs(lon_f) <= 180 and abs(lat_f) > 0.01:
+                                new_coords[name] = (lat_f, lon_f)
+                        except (ValueError, TypeError):
+                            pass
+
+        # Source 2: historical NODEINFO packets (fallback)
+        try:
+            with db_handler.lock:
+                db_handler.cursor.execute(
+                    "SELECT from_id, raw_packet FROM packets "
+                    "WHERE port_name IN ('NODEINFO','NODEINFO_APP') "
+                    "AND backend='meshcore' ORDER BY timestamp DESC"
+                )
+                rows = db_handler.cursor.fetchall()
+        except Exception:
+            rows = []
+
+        seen = set()
+        for from_id, raw_json in rows:
+            if from_id in seen:
+                continue
+            seen.add(from_id)
+            try:
+                raw = json.loads(raw_json) if isinstance(raw_json, str) else raw_json
+                name = raw.get('adv_name', '')
+                if not name or name in new_coords:
+                    continue
+                lat = raw.get('adv_lat') or raw.get('latitude')
+                lon = raw.get('adv_lon') or raw.get('longitude')
+                if lat is not None and lon is not None:
+                    lat_f, lon_f = float(lat), float(lon)
+                    if abs(lat_f) <= 90 and abs(lon_f) <= 180 and abs(lat_f) > 0.01:
+                        new_coords[name] = (lat_f, lon_f)
+            except (ValueError, TypeError, json.JSONDecodeError):
+                pass
+
+        with self._lock:
+            self._coords = new_coords
+            self._last_refresh = time.time()
+
+        logger.debug(f"GeoResolver: refreshed {len(new_coords)} coordinate entries")
+
+    def _ensure_fresh(self, backends: list, db_handler) -> None:
+        """Refresh if stale."""
+        if time.time() - self._last_refresh > self._COORD_TTL:
+            self.refresh_coords(backends, db_handler)
+
+    @property
+    def coord_count(self) -> int:
+        with self._lock:
+            return len(self._coords)
+
+    def get_coords(self, name: str):
+        with self._lock:
+            return self._coords.get(name)
+
+    # ── Scoring ────────────────────────────────────────────────
+
+    def score_candidates(
+        self,
+        candidates: list[str],
+        resolved_neighbors: list[str],
+        all_hops: list[dict] | None = None,
+    ) -> list[tuple[str, float, float]]:
+        """Score candidates geographically.  Three-phase.
+
+        Returns [(name, distance_score, confidence), ...] sorted by
+        distance ascending (lower = better).  confidence is 0.0-1.0.
+        """
+        with self._lock:
+            coords = dict(self._coords)
+
+        # Gather coordinates
+        neighbor_coords = [(n, coords[n]) for n in resolved_neighbors if n in coords]
+        cand_coords = {c: coords[c] for c in candidates if c in coords}
+
+        if len(cand_coords) < 2 or not neighbor_coords:
+            return [(c, 0.0, 0.0) for c in candidates]
+
+        # ── Phase 1: regional clustering ──
+        p1 = {}
+        for cname, (clat, clon) in cand_coords.items():
+            dists = [self._haversine(clat, clon, nlat, nlon)
+                     for _, (nlat, nlon) in neighbor_coords]
+            p1[cname] = sum(dists) / len(dists)
+
+        ranked_p1 = sorted(p1.values())
+        if len(ranked_p1) >= 2 and ranked_p1[0] > 0:
+            ratio = ranked_p1[1] / ranked_p1[0]
+            if ratio >= 1.5:
+                best = min(p1, key=p1.get)
+                conf = min(0.85, 0.6 + 0.05 * min(ratio, 5))
+                return self._build(candidates, cand_coords, p1, conf, best)
+
+        # ── Phase 2: nearest-k + different-closest ──
+        K = min(3, len(neighbor_coords))
+        p2 = {}
+        closest = {}
+        for cname, (clat, clon) in cand_coords.items():
+            dists = sorted(
+                (self._haversine(clat, clon, nlat, nlon), nname)
+                for nname, (nlat, nlon) in neighbor_coords
+            )
+            top_k = dists[:K]
+            p2[cname] = sum(d for d, _ in top_k) / len(top_k)
+            closest[cname] = top_k[0][1] if top_k else None
+
+        ranked_p2 = sorted(p2.values())
+        diff_closest = len(set(closest.values())) > 1
+        if len(ranked_p2) >= 2 and ranked_p2[0] > 0:
+            ratio = ranked_p2[1] / ranked_p2[0]
+            if ratio >= 1.3 and diff_closest:
+                best = min(p2, key=p2.get)
+                conf = min(0.80, 0.55 + 0.05 * min(ratio, 5))
+                return self._build(candidates, cand_coords, p2, conf, best)
+
+        # ── Phase 3: route coherence ──
+        if all_hops and len(cand_coords) <= 5:
+            p3 = self._route_coherence(cand_coords, all_hops, coords)
+            if p3:
+                ranked_p3 = sorted(p3.values())
+                if len(ranked_p3) >= 2 and ranked_p3[0] > 0:
+                    ratio = ranked_p3[1] / ranked_p3[0]
+                    if ratio >= 1.2:
+                        best = min(p3, key=p3.get)
+                        conf = min(0.75, 0.5 + 0.05 * min(ratio, 5))
+                        return self._build(candidates, cand_coords, p3, conf, best)
+
+        # Inconclusive — return Phase 1 scores with zero confidence
+        best = min(p1, key=p1.get) if p1 else candidates[0]
+        return self._build(candidates, cand_coords, p1, 0.0, best)
+
+    def _route_coherence(
+        self,
+        cand_coords: dict[str, tuple[float, float]],
+        all_hops: list[dict],
+        coords: dict[str, tuple[float, float]],
+    ) -> dict[str, float]:
+        """Substitute each candidate into the route, measure total distance."""
+        cand_names = set(cand_coords)
+        scores = {}
+        for cname, (clat, clon) in cand_coords.items():
+            total = 0.0
+            prev = None
+            segments = 0
+            for hop in all_hops:
+                hop_cands = hop.get('candidate_names') or []
+                if cname in hop_cands:
+                    cur = (clat, clon)
+                else:
+                    # Use resolved name for this hop
+                    cur = coords.get(hop.get('name', ''))
+                if cur and prev:
+                    total += self._haversine(prev[0], prev[1], cur[0], cur[1])
+                    segments += 1
+                if cur:
+                    prev = cur
+            if segments > 0:
+                scores[cname] = total
+        return scores
+
+    @staticmethod
+    def _build(
+        candidates: list[str],
+        cand_coords: dict[str, tuple[float, float]],
+        scores: dict[str, float],
+        confidence: float,
+        best: str,
+    ) -> list[tuple[str, float, float]]:
+        """Build sorted result.  Candidates without coords get a penalty."""
+        max_s = max(scores.values()) if scores else 1.0
+        penalty = max_s * 2 if max_s > 0 else 1000.0
+        result = []
+        for c in candidates:
+            if c in scores:
+                conf = confidence if c == best else max(0.0, confidence - 0.2)
+                result.append((c, scores[c], conf))
+            else:
+                result.append((c, penalty, 0.0))
+        result.sort(key=lambda x: x[1])
+        return result
+
+
+# ══════════════════════════════════════════════════════════════════
 # RouteAnalyzer — learns path hash adjacencies for better decoding
 # ══════════════════════════════════════════════════════════════════
 
@@ -122,6 +362,9 @@ class RouteAnalyzer:
 
         # Pending writes waiting to be flushed to SQLite
         self._pending: list[tuple[str, str, str, str]] = []
+
+        # Geographic resolver for coordinate-based disambiguation
+        self._geo = GeoResolver()
 
         # Load existing data from database
         self._load_from_db()
@@ -305,6 +548,67 @@ class RouteAnalyzer:
                 sum(candidates.values())
                 for candidates in self._cache.values()
             )
+
+    # ── Geo-enhanced resolution ────────────────────────────────
+
+    @property
+    def geo_resolver(self) -> GeoResolver:
+        return self._geo
+
+    def resolve_ambiguous_hop_geo(
+        self,
+        hop_hash: str,
+        neighbor_hashes: list[str],
+        candidates: list[str],
+        resolved_neighbors: list[str],
+        all_hops: list[dict] | None = None,
+        backends: list | None = None,
+        db_handler=None,
+    ) -> tuple[list[tuple[str, float]], float]:
+        """Resolve with adjacency first, geographic fallback for ties.
+
+        Returns (ranked_list, confidence) where ranked_list is
+        [(name, score), ...] sorted by score descending.
+        """
+        # Step 1: adjacency scoring
+        adj_ranked = self.resolve_ambiguous_hop(hop_hash, neighbor_hashes, candidates)
+        adj_conf = self.compute_confidence(len(candidates), adj_ranked)
+
+        if adj_conf >= 0.7:
+            return adj_ranked, adj_conf
+
+        # Step 2: check if adjacency is tied / inconclusive
+        tied = (len(adj_ranked) >= 2 and adj_ranked[0][1] == adj_ranked[1][1])
+        if adj_conf >= 0.7 and not tied:
+            return adj_ranked, adj_conf
+
+        # Step 3: geographic fallback
+        if backends and db_handler:
+            self._geo._ensure_fresh(backends, db_handler)
+
+        if self._geo.coord_count == 0:
+            return adj_ranked, adj_conf
+
+        geo_results = self._geo.score_candidates(
+            candidates, resolved_neighbors, all_hops
+        )
+
+        if not geo_results or geo_results[0][2] == 0.0:
+            return adj_ranked, adj_conf
+
+        # Step 4: geo winner beats tied adjacency
+        geo_best = geo_results[0][0]
+        geo_conf = geo_results[0][2]
+
+        if geo_conf > adj_conf:
+            max_adj = max((s for _, s in adj_ranked), default=1.0)
+            final = [(geo_best, max_adj + 1.0)]
+            for name, score in adj_ranked:
+                if name != geo_best:
+                    final.append((name, score))
+            return final, geo_conf
+
+        return adj_ranked, adj_conf
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -1370,7 +1674,7 @@ class MeshtasticTool:
                 'observations': 0,
             })
 
-        # Phase 2: use adjacency learning to resolve ambiguous hops
+        # Phase 2: use adjacency + geographic learning to resolve ambiguous hops
         analyzer = self.route_analyzer
         for idx, hop in enumerate(hops):
             if hop['candidates'] <= 1:
@@ -1387,20 +1691,31 @@ class MeshtasticTool:
             if not neighbor_hashes:
                 continue
 
-            ranked = analyzer.resolve_ambiguous_hop(
-                hop['hash'], neighbor_hashes, hop['candidate_names']
+            # Gather resolved neighbor names for geographic scoring
+            resolved_neighbors = []
+            if idx > 0 and hops[idx - 1]['candidates'] == 1 and hops[idx - 1].get('name'):
+                resolved_neighbors.append(hops[idx - 1]['name'])
+            if (idx < len(hops) - 1 and hops[idx + 1]['candidates'] == 1
+                    and hops[idx + 1].get('name')):
+                resolved_neighbors.append(hops[idx + 1]['name'])
+
+            ranked, confidence = analyzer.resolve_ambiguous_hop_geo(
+                hop['hash'],
+                neighbor_hashes,
+                hop['candidate_names'],
+                resolved_neighbors=resolved_neighbors,
+                all_hops=hops,
+                backends=self.backends,
+                db_handler=self.db_handler,
             )
-            confidence = analyzer.compute_confidence(hop['candidates'], ranked)
             hop['confidence'] = confidence
 
             if ranked and ranked[0][1] > 0:
-                # We have adjacency data — use the top candidate
                 best_name = ranked[0][0]
                 hop['name'] = best_name
                 hop['observations'] = int(ranked[0][1])
-                # Still ambiguous but we have a best guess
                 if confidence >= 0.7:
-                    hop['ambiguous'] = False  # high confidence resolves ambiguity
+                    hop['ambiguous'] = False
 
         return hops
 
