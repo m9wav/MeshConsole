@@ -92,6 +92,222 @@ def require_auth(f):
 
 
 # ══════════════════════════════════════════════════════════════════
+# RouteAnalyzer — learns path hash adjacencies for better decoding
+# ══════════════════════════════════════════════════════════════════
+
+class RouteAnalyzer:
+    """Learns which nodes commonly appear near each other in MeshCore routes.
+
+    MeshCore path hashes are 1-byte values (first byte of each node's public
+    key).  With 300+ nodes and only 256 possible hash values, collisions are
+    inevitable.  This class tracks adjacency patterns — which node candidates
+    appear next to which neighbors — so that ambiguous hashes can be resolved
+    by context over time.
+
+    Thread-safe: writes happen from backend packet callbacks (background
+    threads), reads happen from web request threads.  An in-memory cache
+    provides <1ms lookups; SQLite is used only for persistence.
+    """
+
+    # How many pending writes to batch before flushing to SQLite
+    _FLUSH_THRESHOLD = 50
+
+    def __init__(self, db_handler):
+        self._db = db_handler
+        self._lock = threading.Lock()
+
+        # In-memory adjacency cache:
+        # {(node_hash, neighbor_hash): {candidate_name: count}}
+        self._cache: dict[tuple[str, str], dict[str, int]] = {}
+
+        # Pending writes waiting to be flushed to SQLite
+        self._pending: list[tuple[str, str, str, str]] = []
+
+        # Load existing data from database
+        self._load_from_db()
+
+    def _load_from_db(self) -> None:
+        """Bootstrap the in-memory cache from the SQLite table."""
+        rows = self._db.load_adjacency_all()
+        for node_hash, neighbor_hash, candidate, count in rows:
+            key = (node_hash, neighbor_hash)
+            if key not in self._cache:
+                self._cache[key] = {}
+            self._cache[key][candidate] = count
+        if rows:
+            logger.info(f"RouteAnalyzer: loaded {len(rows)} adjacency records")
+
+    def learn_route(self, hops: list[dict]) -> None:
+        """Learn adjacency patterns from a decoded route.
+
+        For each pair of adjacent hops, if at least one hop has a unique match
+        (exactly 1 candidate), record the adjacency between that known node
+        and all candidates of the neighboring hop.
+
+        Args:
+            hops: List of hop dicts from decode_route(), each with keys
+                  'hash', 'name', 'candidates', 'candidate_names'.
+        """
+        if len(hops) < 2:
+            return
+
+        now = datetime.now().isoformat()
+        new_observations: list[tuple[str, str, str, str]] = []
+
+        for i in range(len(hops) - 1):
+            left = hops[i]
+            right = hops[i + 1]
+            left_unique = left['candidates'] == 1
+            right_unique = right['candidates'] == 1
+
+            if not left_unique and not right_unique:
+                # Neither hop is uniquely resolved — nothing to learn
+                continue
+
+            # If left is unique, record adjacency for all right candidates
+            if left_unique and right.get('candidate_names'):
+                known_name = left['candidate_names'][0]
+                for candidate in right['candidate_names']:
+                    new_observations.append(
+                        (right['hash'], left['hash'], candidate, now)
+                    )
+                    # Also record the reverse: left appeared next to right
+                    new_observations.append(
+                        (left['hash'], right['hash'], known_name, now)
+                    )
+
+            # If right is unique, record adjacency for all left candidates
+            if right_unique and left.get('candidate_names'):
+                known_name = right['candidate_names'][0]
+                for candidate in left['candidate_names']:
+                    new_observations.append(
+                        (left['hash'], right['hash'], candidate, now)
+                    )
+                    # Also record the reverse
+                    new_observations.append(
+                        (right['hash'], left['hash'], known_name, now)
+                    )
+
+        if not new_observations:
+            return
+
+        with self._lock:
+            # Update in-memory cache immediately
+            for node_hash, neighbor_hash, candidate, _ts in new_observations:
+                key = (node_hash, neighbor_hash)
+                if key not in self._cache:
+                    self._cache[key] = {}
+                self._cache[key][candidate] = self._cache[key].get(candidate, 0) + 1
+
+            # Buffer for batch DB write
+            self._pending.extend(new_observations)
+
+            if len(self._pending) >= self._FLUSH_THRESHOLD:
+                self._flush_pending()
+
+    def _flush_pending(self) -> None:
+        """Flush buffered observations to SQLite.  Caller must hold self._lock."""
+        if not self._pending:
+            return
+        batch = list(self._pending)
+        self._pending.clear()
+        # Release lock before DB I/O by doing the write outside
+        # Actually we need to keep it simple and just call the DB
+        # (the DB handler has its own lock)
+        self._db.batch_upsert_adjacency(batch)
+
+    def flush(self) -> None:
+        """Force-flush any pending observations to SQLite.  Thread-safe."""
+        with self._lock:
+            self._flush_pending()
+
+    def resolve_ambiguous_hop(
+        self,
+        hop_hash: str,
+        neighbor_hashes: list[str],
+        candidates: list[str],
+    ) -> list[tuple[str, float]]:
+        """Rank candidates for an ambiguous hop based on adjacency history.
+
+        Args:
+            hop_hash: The 1-byte hex hash of the ambiguous hop.
+            neighbor_hashes: Hashes of the left and/or right neighbors in the route.
+            candidates: List of candidate node names for this hash.
+
+        Returns:
+            List of (candidate_name, score) sorted by score descending.
+            Score is the sum of adjacency counts across all neighbor matches.
+        """
+        if not candidates or not neighbor_hashes:
+            return [(c, 0.0) for c in candidates]
+
+        scores: dict[str, float] = {c: 0.0 for c in candidates}
+
+        with self._lock:
+            for nh in neighbor_hashes:
+                key = (hop_hash, nh)
+                adj = self._cache.get(key, {})
+                for candidate in candidates:
+                    if candidate in adj:
+                        scores[candidate] += adj[candidate]
+
+        ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        return ranked
+
+    def compute_confidence(
+        self,
+        num_candidates: int,
+        ranked_scores: list[tuple[str, float]],
+    ) -> float:
+        """Compute a confidence score (0.0-1.0) for a hop resolution.
+
+        Args:
+            num_candidates: Total number of candidate nodes for this hash.
+            ranked_scores: Output from resolve_ambiguous_hop().
+
+        Returns:
+            Confidence between 0.0 and 1.0.
+        """
+        if num_candidates == 0:
+            return 0.0
+        if num_candidates == 1:
+            return 1.0
+
+        if not ranked_scores:
+            return 0.3
+
+        top_score = ranked_scores[0][1]
+        if top_score == 0:
+            # No adjacency data at all
+            return 0.3
+
+        # If there's a clear winner, confidence is higher
+        if len(ranked_scores) >= 2:
+            second_score = ranked_scores[1][1]
+            if second_score == 0:
+                # Only one candidate has any evidence
+                # Confidence grows with observation count but caps at 0.95
+                return min(0.95, 0.7 + 0.05 * min(top_score, 5))
+            else:
+                # Both have evidence — confidence based on how dominant the leader is
+                ratio = top_score / (top_score + second_score)
+                # ratio of 1.0 -> conf 0.9, ratio of 0.5 -> conf 0.5
+                return max(0.3, min(0.9, ratio))
+        else:
+            # Only one candidate
+            return min(0.95, 0.7 + 0.05 * min(top_score, 5))
+
+    @property
+    def total_observations(self) -> int:
+        """Total adjacency observations in the cache."""
+        with self._lock:
+            return sum(
+                sum(candidates.values())
+                for candidates in self._cache.values()
+            )
+
+
+# ══════════════════════════════════════════════════════════════════
 # MeshtasticTool — legacy monolith kept working for backward compat
 # ══════════════════════════════════════════════════════════════════
 
@@ -154,6 +370,7 @@ class MeshtasticTool:
         self.latest_packets = []
         self.latest_packets_lock = threading.Lock()
         self.db_handler = DatabaseHandler()
+        self.route_analyzer = RouteAnalyzer(self.db_handler)
         self.traceroute_completed = False
         self.is_traceroute_mode = False
         self.traceroute_results = {}
@@ -395,6 +612,15 @@ class MeshtasticTool:
                 message=packet.message,
                 backend=backend_str,
             )
+
+        # Learn route adjacency patterns from MeshCore packets with path data
+        if packet.backend == BackendType.MESHCORE:
+            raw = packet.raw_packet if isinstance(packet.raw_packet, dict) else {}
+            path_hex = raw.get('path', '')
+            if path_hex and len(path_hex) >= 4:
+                hash_size = raw.get('path_hash_size', 1) or 1
+                decoded_hops = self.decode_route(path_hex, hash_size)
+                self.route_analyzer.learn_route(decoded_hops)
 
         # Handle MeshCore traceroute responses
         if packet.port_name == 'TRACEROUTE' and packet.backend == BackendType.MESHCORE:
@@ -1027,6 +1253,247 @@ class MeshtasticTool:
             status_list.append(entry)
         return status_list
 
+    def decode_route(self, path_hex: str, hash_size: int = 1) -> list[dict]:
+        """Decode a MeshCore path to a list of hop dicts.
+
+        The path field in MeshCore packets is a hex string of 1-byte hashes
+        (one per hop).  Each hash is the first byte of that node's public key.
+        By matching these against known contacts we can show which nodes a
+        packet travelled through.
+
+        Phase 1: Basic hash lookup against known contacts.
+        Phase 2: For ambiguous hops, use learned adjacency patterns to rank
+                 candidates and assign confidence scores.
+
+        Returns:
+            [{'hash': 'c6', 'name': 'NodeName', 'ambiguous': False,
+              'candidates': 1, 'confidence': 1.0, 'observations': 0,
+              'candidate_names': ['NodeName']}, ...]
+        """
+        if not path_hex:
+            return []
+
+        # Build lookup from all MeshCore backend contacts
+        lookup: dict[str, list[str]] = {}
+        for backend in self.backends:
+            if backend.backend_type == BackendType.MESHCORE:
+                for prefix, contact in backend._contacts.items():
+                    # Hash is first N bytes of the public key
+                    full_key = contact.get('_full_pub_key', '') or contact.get('public_key', '')
+                    if full_key and len(full_key) >= hash_size * 2:
+                        h = full_key[:hash_size * 2].lower()
+                        name = contact.get('adv_name', '') or prefix
+                        lookup.setdefault(h, []).append(name)
+
+        # Phase 1: basic hash lookup
+        step = hash_size * 2
+        raw_hashes = []
+        for i in range(0, len(path_hex), step):
+            raw_hashes.append(path_hex[i:i + step].lower())
+
+        hops = []
+        for h in raw_hashes:
+            matches = lookup.get(h, [])
+            hops.append({
+                'hash': h,
+                'name': matches[0] if len(matches) == 1 else (
+                    ', '.join(matches[:2]) if matches else None
+                ),
+                'ambiguous': len(matches) > 1,
+                'candidates': len(matches),
+                'candidate_names': list(matches),
+                'confidence': 1.0 if len(matches) == 1 else (
+                    0.3 if matches else 0.0
+                ),
+                'observations': 0,
+            })
+
+        # Phase 2: use adjacency learning to resolve ambiguous hops
+        analyzer = self.route_analyzer
+        for idx, hop in enumerate(hops):
+            if hop['candidates'] <= 1:
+                # Unique or no match — confidence already set
+                continue
+
+            # Gather neighbor hashes
+            neighbor_hashes = []
+            if idx > 0:
+                neighbor_hashes.append(hops[idx - 1]['hash'])
+            if idx < len(hops) - 1:
+                neighbor_hashes.append(hops[idx + 1]['hash'])
+
+            if not neighbor_hashes:
+                continue
+
+            ranked = analyzer.resolve_ambiguous_hop(
+                hop['hash'], neighbor_hashes, hop['candidate_names']
+            )
+            confidence = analyzer.compute_confidence(hop['candidates'], ranked)
+            hop['confidence'] = confidence
+
+            if ranked and ranked[0][1] > 0:
+                # We have adjacency data — use the top candidate
+                best_name = ranked[0][0]
+                hop['name'] = best_name
+                hop['observations'] = int(ranked[0][1])
+                # Still ambiguous but we have a best guess
+                if confidence >= 0.7:
+                    hop['ambiguous'] = False  # high confidence resolves ambiguity
+
+        return hops
+
+    def get_mesh_graph_data(self) -> dict:
+        """Return graph data for D3.js force-directed visualization.
+
+        Reads from the RouteAnalyzer's adjacency cache and the node hash
+        lookup to produce a nodes + links structure suitable for D3.
+
+        Only includes nodes/edges with observation count >= 2 to reduce noise.
+
+        Returns:
+            {
+                "nodes": [{"id": "c6", "name": "...", "connections": N, "confidence": F}],
+                "links": [{"source": "c6", "target": "57", "count": N}]
+            }
+        """
+        analyzer = self.route_analyzer
+
+        # Build hash-to-name and hash-to-pubkey lookups from all MeshCore backend contacts
+        hash_to_names: dict[str, list[str]] = {}
+        hash_to_pubkeys: dict[str, list[str]] = {}
+        for backend in self.backends:
+            if backend.backend_type == BackendType.MESHCORE:
+                for prefix, contact in backend._contacts.items():
+                    full_key = contact.get('_full_pub_key', '') or contact.get('public_key', '')
+                    if full_key and len(full_key) >= 2:
+                        h = full_key[:2].lower()
+                        name = contact.get('adv_name', '') or prefix
+                        hash_to_names.setdefault(h, []).append(name)
+                        hash_to_pubkeys.setdefault(h, []).append(full_key[:12])
+
+        # Build graph from adjacency cache
+        # For the graph, expand hash-level adjacency into per-node entries
+        # using the RouteAnalyzer's learned candidate scores
+        edge_counts: dict[tuple[str, str], int] = {}
+        node_hashes: set[str] = set()
+
+        with analyzer._lock:
+            for (node_hash, neighbor_hash), candidates in analyzer._cache.items():
+                total_count = sum(candidates.values())
+                if total_count < 2:
+                    continue
+                edge_key = tuple(sorted([node_hash, neighbor_hash]))
+                edge_counts[edge_key] = edge_counts.get(edge_key, 0) + total_count
+                node_hashes.add(node_hash)
+                node_hashes.add(neighbor_hash)
+
+        edge_counts = {k: v for k, v in edge_counts.items() if v >= 2}
+        node_hashes = set()
+        for (a, b) in edge_counts:
+            node_hashes.add(a)
+            node_hashes.add(b)
+
+        # Expand hashes into individual nodes using pubkey prefixes
+        # Each real node gets its own graph entry with a unique ID (pubkey prefix)
+        nodes = []
+        node_ids = set()
+        hash_to_node_ids: dict[str, list[str]] = {}  # hash -> list of graph node IDs
+
+        for h in sorted(node_hashes):
+            pubkeys = hash_to_pubkeys.get(h, [])
+            names = hash_to_names.get(h, [])
+            if len(pubkeys) == 0:
+                # Unknown hash — create a single node with hash as ID
+                nid = f"h:{h}"
+                nodes.append({
+                    'id': nid, 'hash': h, 'name': h,
+                    'confidence': 0.0, 'candidates': 0, 'pubkeys': [],
+                })
+                node_ids.add(nid)
+                hash_to_node_ids.setdefault(h, []).append(nid)
+            else:
+                for pk, name in zip(pubkeys, names):
+                    nid = pk.lower()
+                    if nid not in node_ids:
+                        confidence = 1.0 if len(pubkeys) == 1 else max(0.3, min(0.85, 1.0 / len(pubkeys)))
+                        nodes.append({
+                            'id': nid, 'hash': h, 'name': name,
+                            'confidence': round(confidence, 2),
+                            'candidates': len(pubkeys), 'pubkeys': [pk],
+                        })
+                        node_ids.add(nid)
+                        hash_to_node_ids.setdefault(h, []).append(nid)
+
+        # Build links: expand hash-level edges into node-level edges
+        links = []
+        link_set = set()
+        for (ha, hb), count in sorted(edge_counts.items(), key=lambda x: -x[1]):
+            a_nodes = hash_to_node_ids.get(ha, [])
+            b_nodes = hash_to_node_ids.get(hb, [])
+            for a_id in a_nodes:
+                for b_id in b_nodes:
+                    if a_id == b_id:
+                        continue
+                    link_key = tuple(sorted([a_id, b_id]))
+                    if link_key not in link_set:
+                        link_set.add(link_key)
+                        # Distribute count across candidate pairs
+                        pair_count = max(1, count // (len(a_nodes) * len(b_nodes)))
+                        links.append({'source': a_id, 'target': b_id, 'count': pair_count})
+
+        # Count connections per node
+        for n in nodes:
+            n['connections'] = sum(1 for l in links if l['source'] == n['id'] or l['target'] == n['id'])
+
+        # Add local node(s) — connected to their nearest repeaters
+        last_hop_counts: dict[str, int] = {}
+        with self.latest_packets_lock:
+            for pkt in self.latest_packets:
+                if pkt.get('backend') == 'meshcore':
+                    raw = pkt.get('raw_packet', {})
+                    path = raw.get('path', '') if isinstance(raw, dict) else ''
+                    if path and len(path) >= 4:
+                        last_hash = path[-2:].lower()
+                        last_hop_counts[last_hash] = last_hop_counts.get(last_hash, 0) + 1
+
+        for backend in self.backends:
+            if backend.backend_type == BackendType.MESHCORE:
+                local_key = getattr(backend, '_local_pub_key', '') or ''
+                local_name = getattr(backend, '_device_name', '') or 'Local'
+                if local_key and len(local_key) >= 12:
+                    local_id = local_key[:12].lower()
+                    if local_id not in node_ids:
+                        nodes.append({
+                            'id': local_id, 'hash': local_key[:2].lower(),
+                            'name': local_name, 'confidence': 1.0,
+                            'candidates': 1, 'pubkeys': [local_id],
+                            'is_local': True, 'connections': 0,
+                        })
+                        node_ids.add(local_id)
+                    else:
+                        for n in nodes:
+                            if n['id'] == local_id:
+                                n['is_local'] = True
+                                n['name'] = local_name
+                                break
+
+                    # Connect to nearest repeaters (last hops in routes)
+                    top_neighbors = sorted(last_hop_counts.items(), key=lambda x: -x[1])[:5]
+                    for neighbor_hash, count in top_neighbors:
+                        neighbor_node_ids = hash_to_node_ids.get(neighbor_hash, [])
+                        for nid in neighbor_node_ids:
+                            if nid != local_id:
+                                lk = tuple(sorted([local_id, nid]))
+                                if lk not in link_set:
+                                    link_set.add(lk)
+                                    links.append({'source': local_id, 'target': nid, 'count': count})
+
+        # Recount connections
+        for n in nodes:
+            n['connections'] = sum(1 for l in links if l['source'] == n['id'] or l['target'] == n['id'])
+
+        return {'nodes': nodes, 'links': links}
+
     def clear_traceroute_results(self):
         # Clear orchestrator-level traceroute state
         with self.traceroute_results_lock:
@@ -1105,6 +1572,10 @@ class MeshtasticTool:
 
     def cleanup(self):
         """Clean up resources."""
+        try:
+            self.route_analyzer.flush()
+        except Exception as e:
+            logger.error(f"Error flushing route analyzer: {e}")
         try:
             self.db_handler.close()
         except Exception as e:

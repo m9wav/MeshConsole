@@ -72,6 +72,10 @@ class MeshCoreBackend(MeshBackend):
         self._meshcore: Optional[object] = None  # MeshCore instance
         self._contacts: dict[str, dict] = {}     # pubkey_prefix -> contact dict
         self._channels: list[dict] = []           # channel info list
+        self._last_rx_snr: Optional[float] = None  # SNR from most recent RX_LOG_DATA
+        self._last_rx_rssi: Optional[float] = None # RSSI from most recent RX_LOG_DATA
+        self._last_rx_path: str = ""               # Path from most recent RX_LOG_DATA
+        self._last_rx_path_hash_size: int = 1
         self._connected = False
         self._local_node_id: str | None = None
         self._local_pub_key: str | None = None
@@ -384,10 +388,13 @@ class MeshCoreBackend(MeshBackend):
             port_name="TEXT_MESSAGE",
             backend=BackendType.MESHCORE,
             message=payload.get("text", ""),
-            snr=payload.get("snr"),
+            snr=payload.get("snr") or self._last_rx_snr,
+            rssi=self._last_rx_rssi,
             hop_limit=payload.get("path_len"),
             raw_packet=payload,
         )
+        self._last_rx_snr = None
+        self._last_rx_rssi = None
         self._emit_packet(packet)
 
     async def _on_channel_message(self, event):
@@ -431,9 +438,12 @@ class MeshCoreBackend(MeshBackend):
             port_name="TEXT_MESSAGE",
             backend=BackendType.MESHCORE,
             message=payload.get("text", ""),
-            snr=payload.get("snr"),
+            snr=payload.get("snr") or self._last_rx_snr,
+            rssi=self._last_rx_rssi,
             raw_packet=payload,
         )
+        self._last_rx_snr = None
+        self._last_rx_rssi = None
         self._emit_packet(packet)
 
     async def _on_advertisement(self, event):
@@ -477,6 +487,9 @@ class MeshCoreBackend(MeshBackend):
             enriched_raw["snr"] = snr
         if rssi is not None:
             enriched_raw["rssi"] = rssi
+        if self._last_rx_path:
+            enriched_raw["path"] = self._last_rx_path
+            enriched_raw["path_hash_size"] = self._last_rx_path_hash_size
 
         packet = UnifiedPacket(
             timestamp=datetime.now().isoformat(),
@@ -608,6 +621,15 @@ class MeshCoreBackend(MeshBackend):
         payload_type = payload.get("payload_typename", "") or str(payload.get("payload_type", ""))
         snr = payload.get("snr")
         rssi = payload.get("rssi")
+
+        # Store latest signal/path data so dedicated event handlers can use it
+        # (RX_LOG_DATA fires before CONTACT_MSG_RECV/CHANNEL_MSG_RECV/ADVERTISEMENT)
+        if snr is not None:
+            self._last_rx_snr = snr
+        if rssi is not None:
+            self._last_rx_rssi = rssi
+        self._last_rx_path = payload.get("path", "")
+        self._last_rx_path_hash_size = payload.get("path_hash_size", 1)
 
         # Always update contacts cache from adverts (RX_LOG_DATA carries
         # adv_name, adv_key, and sometimes lat/lon + SNR/RSSI that the
