@@ -511,6 +511,11 @@
                         <i class="bi bi-gear"></i> Settings
                     </button>
                 </li>
+                <li class="nav-item" role="presentation" id="flood-tab-item" style="display: none;">
+                    <button class="nav-link" id="flood-tab" data-bs-toggle="tab" data-bs-target="#flood" type="button" role="tab">
+                        <i class="bi bi-broadcast"></i> Flood Advert
+                    </button>
+                </li>
             </ul>
 
             <!-- Tab Content -->
@@ -871,6 +876,44 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- Flood Advertisement Tab -->
+                <div class="tab-pane fade" id="flood" role="tabpanel">
+                    <div class="row">
+                        <div class="col-lg-6">
+                            <div class="card card-modern">
+                                <div class="card-header card-header-modern">
+                                    <h5 class="mb-0"><i class="bi bi-broadcast text-warning"></i> Flood Advertisement</h5>
+                                </div>
+                                <div class="card-body">
+                                    <p class="text-muted">Send a flooded advertisement from a MeshCore device. The advertisement will propagate through the mesh network via all reachable repeaters.</p>
+
+                                    <div class="mb-3">
+                                        <label class="form-label">MeshCore Device</label>
+                                        <select class="form-select form-control-modern" id="flood-device-select">
+                                            <option value="">Loading devices...</option>
+                                        </select>
+                                    </div>
+
+                                    <button class="btn btn-warning btn-modern w-100" id="send-flood-btn" disabled>
+                                        <i class="bi bi-broadcast"></i> Send Flood Advertisement
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-lg-6">
+                            <div class="card card-modern">
+                                <div class="card-header card-header-modern">
+                                    <h5 class="mb-0"><i class="bi bi-reception-4 text-success"></i> Results</h5>
+                                </div>
+                                <div class="card-body" id="flood-results-container">
+                                    <p class="text-muted" id="flood-results-placeholder">Send a flood advertisement to see which nodes hear it.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
             </div>
         </div>
     </div>
@@ -1036,6 +1079,8 @@
                         fetchNodes();
                     } else if (target === '#stats') {
                         fetchStats();
+                    } else if (target === '#flood') {
+                        loadFloodDevices();
                     }
                 });
             });
@@ -2441,6 +2486,11 @@
                 if (sendBanner) sendBanner.style.display = 'none';
                 if (tracerouteBanner) tracerouteBanner.style.display = 'none';
             }
+
+            // Show/hide flood tab based on auth + meshcore availability
+            if (typeof checkFloodTabVisibility === 'function') {
+                checkFloodTabVisibility();
+            }
         }
 
         function requireAuth(action) {
@@ -2550,6 +2600,191 @@
                     authenticate();
                 }
             });
+        });
+
+        // ── Flood Advertisement ─────────────────────────────────
+        let floodState = {
+            polling: false,
+            pollTimer: null,
+            pubKey: '',
+            floodTime: '',
+            heardCount: 0,
+        };
+
+        function checkFloodTabVisibility() {
+            // Show flood tab only if authenticated AND at least one MeshCore device
+            fetch('/meshcore/devices')
+                .then(r => r.json())
+                .then(data => {
+                    const hasDevices = data.devices && data.devices.length > 0;
+                    const tabItem = document.getElementById('flood-tab-item');
+                    if (tabItem) {
+                        tabItem.style.display = (authState.authenticated && hasDevices) ? '' : 'none';
+                    }
+                })
+                .catch(() => {
+                    const tabItem = document.getElementById('flood-tab-item');
+                    if (tabItem) tabItem.style.display = 'none';
+                });
+        }
+
+        // Hook into auth state changes
+        const _origUpdateAuthUI = typeof updateAuthUI === 'function' ? updateAuthUI : null;
+
+        function loadFloodDevices() {
+            const select = document.getElementById('flood-device-select');
+            const btn = document.getElementById('send-flood-btn');
+            fetch('/meshcore/devices')
+                .then(r => r.json())
+                .then(data => {
+                    select.innerHTML = '';
+                    if (!data.devices || data.devices.length === 0) {
+                        select.innerHTML = '<option value="">No MeshCore devices connected</option>';
+                        btn.disabled = true;
+                        return;
+                    }
+                    data.devices.forEach(d => {
+                        const opt = document.createElement('option');
+                        opt.value = d.device_id;
+                        opt.textContent = d.device_name || d.device_id;
+                        opt.dataset.pubKey = d.pub_key || '';
+                        select.appendChild(opt);
+                    });
+                    btn.disabled = false;
+                })
+                .catch(() => {
+                    select.innerHTML = '<option value="">Error loading devices</option>';
+                    btn.disabled = true;
+                });
+        }
+
+        function sendFloodAdvert() {
+            requireAuth(() => {
+                const select = document.getElementById('flood-device-select');
+                const btn = document.getElementById('send-flood-btn');
+                const deviceId = select.value;
+                const selectedOpt = select.options[select.selectedIndex];
+                const pubKey = selectedOpt ? selectedOpt.dataset.pubKey : '';
+
+                btn.disabled = true;
+                btn.innerHTML = '<span class="loading-spinner"></span> Sending...';
+
+                fetch('/meshcore/flood-advert', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({device_id: deviceId})
+                })
+                .then(r => {
+                    if (r.status === 401) {
+                        authState.authenticated = false;
+                        updateAuthUI();
+                        throw new Error('Authentication required');
+                    }
+                    return r.json();
+                })
+                .then(data => {
+                    if (data.success) {
+                        showAlert('Flood advertisement sent!', 'success');
+                        floodState.pubKey = data.pub_key || pubKey;
+                        floodState.floodTime = data.flood_time;
+                        floodState.heardCount = 0;
+                        startFloodPolling();
+                        renderFloodResults(0, [], true);
+                    } else {
+                        showAlert(data.error || 'Failed to send', 'danger');
+                    }
+                })
+                .catch(err => {
+                    showAlert(err.message || 'Error sending flood', 'danger');
+                })
+                .finally(() => {
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="bi bi-broadcast"></i> Send Flood Advertisement';
+                });
+            });
+        }
+
+        function startFloodPolling() {
+            stopFloodPolling();
+            floodState.polling = true;
+            let polls = 0;
+            const maxPolls = 60; // Poll for ~2 minutes
+
+            function poll() {
+                if (!floodState.polling || polls >= maxPolls) {
+                    stopFloodPolling();
+                    return;
+                }
+                polls++;
+                fetch(`/meshcore/flood-results?pub_key=${encodeURIComponent(floodState.pubKey)}&since=${encodeURIComponent(floodState.floodTime)}`)
+                    .then(r => r.json())
+                    .then(data => {
+                        floodState.heardCount = data.heard || 0;
+                        renderFloodResults(data.heard || 0, data.nodes || [], false);
+                    })
+                    .catch(() => {});
+                floodState.pollTimer = setTimeout(poll, 2000);
+            }
+            poll();
+        }
+
+        function stopFloodPolling() {
+            floodState.polling = false;
+            if (floodState.pollTimer) {
+                clearTimeout(floodState.pollTimer);
+                floodState.pollTimer = null;
+            }
+        }
+
+        function renderFloodResults(heard, nodes, loading) {
+            const container = document.getElementById('flood-results-container');
+
+            let html = '';
+            if (loading) {
+                html += `<div class="d-flex align-items-center mb-3">
+                    <span class="loading-spinner me-2"></span>
+                    <strong>Listening for responses...</strong>
+                </div>`;
+            }
+
+            html += `<div class="mb-3">
+                <h3 class="text-center"><span class="badge bg-${heard > 0 ? 'success' : 'secondary'} fs-4">Heard ${heard} time${heard !== 1 ? 's' : ''}</span></h3>
+            </div>`;
+
+            if (nodes.length > 0) {
+                html += '<div class="list-group">';
+                nodes.forEach(n => {
+                    const snrBadge = n.snr != null ? `<span class="badge bg-info">SNR: ${n.snr}dB</span>` : '';
+                    const rssiBadge = n.rssi != null ? `<span class="badge bg-secondary">RSSI: ${n.rssi}dBm</span>` : '';
+                    const pathInfo = n.path ? `<small class="text-muted d-block">Path: ${n.path}</small>` : '';
+                    html += `<div class="list-group-item list-group-item-action">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <strong>${n.node_name || n.node_id}</strong>
+                                <small class="text-muted d-block">${n.node_id}</small>
+                                ${pathInfo}
+                            </div>
+                            <div class="text-end">
+                                ${snrBadge} ${rssiBadge}
+                            </div>
+                        </div>
+                    </div>`;
+                });
+                html += '</div>';
+            } else if (!loading && heard === 0) {
+                html += '<p class="text-muted text-center">No responses received yet. Responses may take time to propagate through the mesh.</p>';
+            }
+
+            container.innerHTML = html;
+        }
+
+        // Wire up the send button
+        document.addEventListener('DOMContentLoaded', function() {
+            const btn = document.getElementById('send-flood-btn');
+            if (btn) btn.addEventListener('click', sendFloodAdvert);
+
+            // Check flood tab visibility after auth status loads
+            checkFloodTabVisibility();
         });
 
         // Load settings when page loads

@@ -446,6 +446,45 @@ def create_app(orchestrator):
             logger.error(f"Error fetching status: {e}")
             return jsonify({'error': str(e), 'connected': False}), 500
 
+    # ── Flood advertisement endpoints ─────────────────────────
+
+    @app.route('/meshcore/devices')
+    def meshcore_devices():
+        """Return connected MeshCore devices (for flood advertisement UI)."""
+        try:
+            devices = orchestrator.get_meshcore_devices()
+            return jsonify({'devices': devices})
+        except Exception as e:
+            logger.error(f"Error fetching MeshCore devices: {e}")
+            return jsonify({'devices': [], 'error': str(e)}), 500
+
+    @app.route('/meshcore/flood-advert', methods=['POST'])
+    @require_auth
+    def flood_advert():
+        """Send a flooded advertisement from a MeshCore device."""
+        try:
+            data = request.get_json() or {}
+            device_id = data.get('device_id')
+            result = orchestrator.send_flood_advertisement(device_id=device_id)
+            return jsonify(result)
+        except Exception as e:
+            logger.error(f"Error sending flood advertisement: {e}")
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    @app.route('/meshcore/flood-results')
+    def flood_results():
+        """Poll for flood advertisement echo results."""
+        try:
+            pub_key = request.args.get('pub_key', '')
+            since = request.args.get('since', '')
+            if not pub_key or not since:
+                return jsonify({'heard': 0, 'nodes': [], 'error': 'Missing pub_key or since'}), 400
+            results = orchestrator.get_flood_results(pub_key, since)
+            return jsonify(results)
+        except Exception as e:
+            logger.error(f"Error fetching flood results: {e}")
+            return jsonify({'heard': 0, 'nodes': [], 'error': str(e)}), 500
+
     @app.route('/mesh-graph')
     def get_mesh_graph():
         """Return graph data for D3.js mesh topology visualization."""

@@ -223,6 +223,30 @@ class MeshCoreBackend(MeshBackend):
             logger.info(f"Path discovery sent to {destination} (result: {getattr(result, 'type', 'unknown')})")
             logger.info(f"Waiting for PATH_RESPONSE event from {destination}...")
 
+    def send_advertisement(self, flood: bool = False) -> str:
+        """Send a device advertisement, optionally as a flood.
+
+        Args:
+            flood: If True, broadcast with 255-hop flood.
+
+        Returns:
+            'ok' on success, error string otherwise.
+        """
+        if not self._meshcore or not self._loop:
+            return "Not connected"
+
+        future = asyncio.run_coroutine_threadsafe(
+            self._meshcore.commands.send_advert(flood=flood),
+            self._loop,
+        )
+        result = future.result(timeout=15)
+        if result is None:
+            return "No response from device"
+        if getattr(result, "type", None) == EventType.ERROR:
+            return f"Error: {getattr(result, 'payload', 'unknown')}"
+        logger.info(f"Advertisement sent (flood={flood}) from {self._device_name}")
+        return "ok"
+
     def on_packet_received(self, callback: Callable[[UnifiedPacket], None]) -> None:
         """Register a callback for incoming packets."""
         self._packet_callback = callback
