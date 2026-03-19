@@ -7,28 +7,21 @@
 </p>
 
 <p align="center">
-  <a href="https://pypi.org/project/meshconsole/"><img src="https://img.shields.io/pypi/v/meshconsole?v=3.2.0" alt="PyPI"></a>
+  <a href="https://pypi.org/project/meshconsole/"><img src="https://img.shields.io/pypi/v/meshconsole?v=3.3.0" alt="PyPI"></a>
   <a href="https://m9wav.uk/">m9wav.uk</a>
 </p>
 
 ---
 
-## What's New in v3.2.0
+## What's New
 
-- **Multi-device support** -- connect unlimited devices simultaneously. Run 2 Meshtastic + 1 MeshCore, 3 MeshCore devices, or any combination. No more one-per-type limit.
-- **`--device` flag** -- specify multiple devices on the CLI: `--device meshtastic:usb:/dev/ttyACM0 --device meshcore:usb:/dev/ttyUSB0`
-- **Multi-device config** -- new `[Device.0]`, `[Device.1]`, etc. INI sections for persistent multi-device setups
-- **Per-device identity** -- each device gets a unique ID (e.g. `meshtastic:!fa9dc488`), shown in status bar, filters, and system info
-- **Dynamic backend filter** -- web UI filter dropdown auto-populates from connected devices
+**v3.3.0** -- Auth UX (send/traceroute hidden until login), routing noise filter, cleaner UI
 
-### v3.1.0
+**v3.2.0** -- Unlimited simultaneous devices, `--device` CLI flag, per-device identity
 
-- Plug and play USB auto-detection, flexible optional dependencies
+**v3.1.0** -- USB auto-detection, flexible optional dependencies
 
-### v3.0.0
-
-- MeshCore backend support (BLE, serial, TCP)
-- Dual-device mode, modular architecture, 70-test suite
+**v3.0.0** -- MeshCore backend, dual-device mode, modular architecture
 
 ---
 
