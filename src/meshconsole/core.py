@@ -1966,67 +1966,6 @@ class MeshtasticTool:
             'pub_key': pub_key,
         }
 
-    def get_flood_results(self, pub_key: str, since: str) -> dict:
-        """Collect advertisement echo results since a given timestamp.
-
-        After flooding an advertisement, other nodes relay it back.  We
-        look in the recent packets for RX_LOG_DATA / NODEINFO packets
-        that reference our own pub_key (via adv_key) and arrived after
-        ``since``.
-
-        Returns a dict with heard count, node list, and relay details.
-        """
-        if not pub_key:
-            return {'heard': 0, 'nodes': []}
-
-        prefix = pub_key[:12].lower()
-        since_dt = datetime.fromisoformat(since)
-
-        heard_nodes: dict[str, dict] = {}
-
-        with self.latest_packets_lock:
-            for pkt in self.latest_packets:
-                try:
-                    pkt_time = datetime.fromisoformat(pkt.get('timestamp', ''))
-                except (ValueError, TypeError):
-                    continue
-                if pkt_time <= since_dt:
-                    continue
-
-                raw = pkt.get('raw_packet', {})
-                if not isinstance(raw, dict):
-                    continue
-
-                # Match packets that echo our advertisement
-                adv_key = (raw.get('adv_key', '') or '').lower()
-                if not adv_key:
-                    continue
-                if not adv_key.startswith(prefix):
-                    continue
-
-                # This is a relay/echo of our flood advertisement
-                from_id = pkt.get('from_id', '')
-                from_name = pkt.get('from_name', from_id)
-                path = raw.get('path', '')
-                snr = raw.get('snr') or pkt.get('snr')
-                rssi = raw.get('rssi') or pkt.get('rssi')
-
-                node_key = from_name or from_id
-                if node_key not in heard_nodes:
-                    heard_nodes[node_key] = {
-                        'node_id': from_id,
-                        'node_name': from_name,
-                        'snr': snr,
-                        'rssi': rssi,
-                        'path': path,
-                        'timestamp': pkt.get('timestamp', ''),
-                    }
-
-        return {
-            'heard': len(heard_nodes),
-            'nodes': list(heard_nodes.values()),
-        }
-
     def clear_traceroute_results(self):
         # Clear orchestrator-level traceroute state
         with self.traceroute_results_lock:
