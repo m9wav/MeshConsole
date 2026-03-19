@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <a href="https://pypi.org/project/meshconsole/"><img src="https://img.shields.io/pypi/v/meshconsole?v=3.4.2" alt="PyPI"></a>
+  <a href="https://pypi.org/project/meshconsole/"><img src="https://img.shields.io/pypi/v/meshconsole?v=3.4.3" alt="PyPI"></a>
   <a href="https://m9wav.uk/">m9wav.uk</a>
 </p>
 
