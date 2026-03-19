@@ -1691,13 +1691,19 @@ class MeshtasticTool:
             if not neighbor_hashes:
                 continue
 
-            # Gather resolved neighbor names for geographic scoring
+            # Gather resolved neighbor names for geographic scoring.
+            # Include uniquely-matched hops AND previously-resolved ambiguous
+            # hops (confidence >= 0.5), so that earlier resolutions in the
+            # left-to-right pass cascade forward to help later hops.
             resolved_neighbors = []
-            if idx > 0 and hops[idx - 1]['candidates'] == 1 and hops[idx - 1].get('name'):
-                resolved_neighbors.append(hops[idx - 1]['name'])
-            if (idx < len(hops) - 1 and hops[idx + 1]['candidates'] == 1
-                    and hops[idx + 1].get('name')):
-                resolved_neighbors.append(hops[idx + 1]['name'])
+            for ni in (idx - 1, idx + 1):
+                if 0 <= ni < len(hops):
+                    nh = hops[ni]
+                    if nh.get('name') and (
+                        nh['candidates'] == 1
+                        or nh.get('confidence', 0) >= 0.5
+                    ):
+                        resolved_neighbors.append(nh['name'])
 
             ranked, confidence = analyzer.resolve_ambiguous_hop_geo(
                 hop['hash'],
