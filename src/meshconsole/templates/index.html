@@ -3685,6 +3685,8 @@
                 const doCenter = () => {
                     const ctr = document.getElementById('mesh-graph-container');
                     if (!ctr || localNode.x === undefined) return;
+                    // Skip if user already jumped to a specific node
+                    if (meshGraphState.lockedNode && meshGraphState.lockedNode !== localNode.id) return;
                     meshGraphState.svg.call(
                         meshGraphState.zoom.transform,
                         d3.zoomIdentity
