@@ -648,14 +648,16 @@ class MeshCoreBackend(MeshBackend):
         pkt_hash = payload.get("pkt_hash", "")
         if adv_key:
             from_prefix = adv_key[:12]
+            from_name = adv_name or self._resolve_contact_name(from_prefix)
+        elif payload_type in ("TRACE", "PATH"):
+            # Trace/path packets are floods — we don't know the originator
+            from_prefix = "mesh"
+            from_name = "Mesh Network"
         else:
-            # No pubkey available — use local node as sender context
-            # pkt_hash is just a packet identifier, not a node identifier
             from_prefix = self._local_pub_key[:12] if self._local_pub_key else "unknown"
-        from_name = adv_name or self._resolve_contact_name(from_prefix)
-        # If we still just have a raw prefix and no resolved name, use a descriptive label
-        if not adv_name and from_name == from_prefix and not adv_key:
-            from_name = self._device_name or "Local"
+            from_name = adv_name or self._resolve_contact_name(from_prefix)
+            if not adv_name and from_name == from_prefix:
+                from_name = self._device_name or "Local"
 
         port_map = {
             "REQ": "ROUTING",
