@@ -108,7 +108,8 @@ def create_app(orchestrator):
 
     @app.route('/')
     def index():
-        return render_template('index.html')
+        from meshconsole import __version__
+        return render_template('index.html', version=__version__)
 
     @app.route('/auth/login', methods=['POST'])
     def login():

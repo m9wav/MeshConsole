@@ -513,12 +513,12 @@
                         <i class="bi bi-inbox"></i> Live Packets
                     </button>
                 </li>
-                <li class="nav-item" role="presentation">
+                <li class="nav-item" role="presentation" id="send-tab-item" style="display:none;">
                     <button class="nav-link" id="send-tab" data-bs-toggle="tab" data-bs-target="#send" type="button" role="tab">
                         <i class="bi bi-send"></i> Send Message
                     </button>
                 </li>
-                <li class="nav-item" role="presentation">
+                <li class="nav-item" role="presentation" id="traceroute-tab-item" style="display:none;">
                     <button class="nav-link" id="traceroute-tab" data-bs-toggle="tab" data-bs-target="#traceroute" type="button" role="tab">
                         <i class="bi bi-diagram-3"></i> Traceroute
                     </button>
@@ -563,7 +563,7 @@
                                 <option value="TELEMETRY_APP,TELEMETRY">Telemetry</option>
                                 <option value="NODEINFO_APP,NODEINFO">Node Info</option>
                                 <option value="TRACEROUTE_APP,TRACEROUTE">Traceroute</option>
-                                <option value="ROUTING_APP,ROUTING,RESPONSE,REQ">Routing</option>
+                                <option value="ROUTING_APP,ROUTING,RESPONSE,REQ,ANON_REQ">Routing</option>
                                 <option value="NEIGHBORINFO_APP">Neighbor Info</option>
                                 <option value="CONTROL">Control</option>
                             </select>
@@ -895,12 +895,26 @@
                                 </div>
                                 <div class="card-body">
                                     <small class="text-muted">
-                                        <div>Version: 3.2.0</div>
-                                        <div>Local Node: <span id="local-node">Detecting...</span></div>
-                                        <div id="backend-mode-display"></div>
+                                        <div>Version: {{ version }}</div>
                                         <div id="devices-display"></div>
                                         <div>Session: <span id="session-start">Just started</span></div>
                                     </small>
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+                    <!-- Login (full width, under settings row) -->
+                    <div id="settings-login-section" class="mt-3" style="display:none;">
+                        <div class="card card-modern">
+                            <div class="card-body py-2">
+                                <div class="d-flex align-items-center gap-3 flex-wrap">
+                                    <small class="text-muted"><i class="bi bi-shield-lock"></i> Login to enable Send & Traceroute</small>
+                                    <div class="input-group input-group-sm" style="max-width: 280px;">
+                                        <input type="password" class="form-control form-control-modern" id="settings-login-password" placeholder="Password">
+                                        <button class="btn btn-primary-modern btn-sm" id="settings-login-btn" type="button">Login</button>
+                                    </div>
+                                    <small id="settings-login-error" class="text-danger" style="display:none;"></small>
                                 </div>
                             </div>
                         </div>
@@ -1076,6 +1090,33 @@
             document.getElementById('save-settings').addEventListener('click', saveSettings);
             document.getElementById('export-json').addEventListener('click', () => exportData('json'));
             document.getElementById('export-csv').addEventListener('click', () => exportData('csv'));
+
+            // Settings login
+            const settingsLoginBtn = document.getElementById('settings-login-btn');
+            const settingsLoginPwd = document.getElementById('settings-login-password');
+            if (settingsLoginBtn) {
+                settingsLoginBtn.addEventListener('click', () => {
+                    const pwd = settingsLoginPwd.value;
+                    fetch('/auth/login', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({password: pwd})
+                    })
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.success) {
+                            authState.authenticated = true;
+                            updateAuthUI();
+                        } else {
+                            const err = document.getElementById('settings-login-error');
+                            if (err) { err.textContent = data.error || 'Invalid password'; err.style.display = ''; }
+                        }
+                    });
+                });
+                settingsLoginPwd.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') settingsLoginBtn.click();
+                });
+            }
 
             // Tab switching
             document.querySelectorAll('[data-bs-toggle="tab"]').forEach(tab => {
@@ -1377,7 +1418,7 @@
                         return `
                             <div class="row">
                                 <div class="${hasCoords ? 'col-md-6' : 'col-12'}">
-                                    <h6><i class="bi bi-info-circle text-warning"></i> Node Information (MeshCore)</h6>
+                                    <h6><i class="bi bi-info-circle text-warning"></i> Node Information</h6>
                                     <ul class="list-unstyled">
                                         <li><strong>Name:</strong> ${packet.from_name || 'Unknown'}</li>
                                         <li><strong>Public Key:</strong> <code>${packet.from_id || 'Unknown'}</code></li>
@@ -1400,14 +1441,35 @@
                     `;
                 
                 case 'TRACEROUTE_APP':
-                case 'TRACEROUTE':
+                case 'TRACEROUTE': {
+                    let traceContent = '';
+                    const raw = packet.raw_packet || {};
+                    if (packet.backend === 'meshcore') {
+                        const snrVal = (packet.snr !== null && packet.snr !== undefined && packet.snr !== 'N/A') ? `${packet.snr} dB` : '';
+                        const rssiVal = (packet.rssi !== null && packet.rssi !== undefined && packet.rssi !== 'N/A') ? `${packet.rssi} dBm` : '';
+                        const hopLen = (packet.hop_limit !== null && packet.hop_limit !== undefined && packet.hop_limit !== 'N/A') ? `${packet.hop_limit} hops` : '';
+                        const details = [snrVal, rssiVal, hopLen].filter(Boolean).join(' | ');
+                        traceContent = `<p>Trace packet observed on mesh${details ? ': ' + details : ''}</p>`;
+                        if (packet.payload && packet.payload !== 'TRACE' && packet.payload !== 'PATH') {
+                            traceContent += `<p class="text-muted small">${packet.payload}</p>`;
+                        }
+                    } else {
+                        const route = raw.decoded?.traceroute?.route || [];
+                        if (route.length > 0) {
+                            traceContent = `<p>Route: ${route.map(h => '!' + h.toString(16).padStart(8,'0')).join(' → ')}</p>`;
+                        } else {
+                            traceContent = `<p>Traceroute response received.</p>`;
+                        }
+                    }
                     return `
                         <h6><i class="bi bi-diagram-3 text-primary"></i> Traceroute Data</h6>
-                        <p>Traceroute response received. Check the Traceroute tab for detailed analysis.</p>
+                        ${traceContent}
                     `;
+                }
                 
                 case 'ROUTING':
                 case 'ROUTING_APP':
+                case 'ANON_REQ':
                     return `
                         <h6><i class="bi bi-signpost text-secondary"></i> Routing Data</h6>
                         <p>${packet.payload || 'Routing acknowledgment received.'}</p>
@@ -1464,6 +1526,7 @@
                 'CONTROL': '<i class="bi bi-gear text-secondary"></i>',
                 'RESPONSE': '<i class="bi bi-signpost text-secondary"></i>',
                 'REQ': '<i class="bi bi-signpost text-secondary"></i>',
+                'ANON_REQ': '<i class="bi bi-signpost text-secondary"></i>',
             };
             return icons[portName] || '<i class="bi bi-question-circle text-muted"></i>';
         }
@@ -2200,14 +2263,14 @@
                                 const isConn = info.connected;
                                 const indicatorClass = isConn ? 'status-online' : 'status-offline';
                                 const deviceName = info.device_name || '';
+                                const typeName = (info.type || 'unknown');
+                                const typeLabel = typeName.charAt(0).toUpperCase() + typeName.slice(1);
                                 statusHtml += `<span class="backend-status-item">`;
                                 statusHtml += `<span class="status-indicator ${indicatorClass}"></span>`;
                                 if (isConn && deviceName) {
-                                    statusHtml += deviceName;
+                                    statusHtml += `${typeLabel}: ${deviceName}`;
                                 } else {
-                                    const typeName = (info.type || 'unknown');
-                                    const label = typeName.charAt(0).toUpperCase() + typeName.slice(1);
-                                    statusHtml += isConn ? label : `${label}: Offline`;
+                                    statusHtml += isConn ? `${typeLabel}` : `${typeLabel}: Offline`;
                                 }
                                 statusHtml += `</span>`;
                                 if (idx < entries.length - 1) {
@@ -2226,18 +2289,9 @@
                             statusArea.innerHTML = `<span class="backend-status-item"><span class="status-indicator ${indicatorClass}"></span>${statusLabel}</span>`;
                         }
 
-                        // Update local node ID if available
+                        // Track local node ID for filtering
                         if (data.local_node_id) {
-                            document.getElementById('local-node').textContent = data.local_node_id;
                             appState.localNodeId = data.local_node_id;
-                        }
-
-                        // Update backend mode
-                        if (data.backend_mode) {
-                            const modeDisplay = document.getElementById('backend-mode-display');
-                            if (modeDisplay) {
-                                modeDisplay.textContent = `Backend Mode: ${data.backend_mode}`;
-                            }
                         }
 
                         // v3.2.0: render one line per connected device
@@ -2725,15 +2779,31 @@
         function updateAuthUI() {
             const sendBanner = document.getElementById('send-auth-banner');
             const tracerouteBanner = document.getElementById('traceroute-auth-banner');
+            const sendTabItem = document.getElementById('send-tab-item');
+            const tracerouteTabItem = document.getElementById('traceroute-tab-item');
+            const settingsLogin = document.getElementById('settings-login-section');
 
-            if (authState.required && !authState.authenticated) {
-                // Show auth required banners
-                if (sendBanner) sendBanner.style.display = 'block';
-                if (tracerouteBanner) tracerouteBanner.style.display = 'block';
-            } else {
-                // Hide banners when authenticated or no auth required
+            if (!authState.required) {
+                // No password configured — read-only dashboard, hide everything auth-related
+                if (sendTabItem) sendTabItem.style.display = 'none';
+                if (tracerouteTabItem) tracerouteTabItem.style.display = 'none';
                 if (sendBanner) sendBanner.style.display = 'none';
                 if (tracerouteBanner) tracerouteBanner.style.display = 'none';
+                if (settingsLogin) settingsLogin.style.display = 'none';
+            } else if (authState.authenticated) {
+                // Authenticated — show tabs, hide banners and login
+                if (sendTabItem) sendTabItem.style.display = '';
+                if (tracerouteTabItem) tracerouteTabItem.style.display = '';
+                if (sendBanner) sendBanner.style.display = 'none';
+                if (tracerouteBanner) tracerouteBanner.style.display = 'none';
+                if (settingsLogin) settingsLogin.innerHTML = '<p class="text-success"><i class="bi bi-check-circle"></i> Authenticated — Send Message and Traceroute are enabled.</p>';
+            } else {
+                // Auth required but not authenticated — hide tabs, show login in settings
+                if (sendTabItem) sendTabItem.style.display = 'none';
+                if (tracerouteTabItem) tracerouteTabItem.style.display = 'none';
+                if (sendBanner) sendBanner.style.display = 'block';
+                if (tracerouteBanner) tracerouteBanner.style.display = 'block';
+                if (settingsLogin) settingsLogin.style.display = '';
             }
         }
 
