@@ -3679,22 +3679,25 @@
                     .attr('y', d => d.y);
             });
 
-            // Center on local node after simulation settles
+            // Center on local node — use simple delayed approach
             const localNode = data.nodes.find(n => n.is_local);
             if (localNode) {
-                const centerOnLocal = () => {
-                    if (localNode.x !== undefined) {
-                        svg.transition().duration(600).call(
-                            zoom.transform,
-                            d3.zoomIdentity
-                                .translate(width / 2, height / 2)
-                                .scale(1.2)
-                                .translate(-localNode.x, -localNode.y)
-                        );
-                        highlightNodeConnections(localNode);
-                    }
+                const doCenter = () => {
+                    const ctr = document.getElementById('mesh-graph-container');
+                    if (!ctr || localNode.x === undefined) return;
+                    meshGraphState.svg.call(
+                        meshGraphState.zoom.transform,
+                        d3.zoomIdentity
+                            .translate(ctr.clientWidth / 2, ctr.clientHeight / 2)
+                            .scale(1.5)
+                            .translate(-localNode.x, -localNode.y)
+                    );
+                    highlightNodeConnections(localNode);
+                    meshGraphState.lockedNode = localNode.id;
                 };
-                setTimeout(centerOnLocal, 1500);
+                // Fire at 2s and 4s — by 4s positions have stabilized
+                setTimeout(doCenter, 2000);
+                setTimeout(doCenter, 4000);
             }
 
             function dragStarted(event, d) {
