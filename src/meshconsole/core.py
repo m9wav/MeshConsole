@@ -1774,9 +1774,12 @@ class MeshtasticTool:
         """
         analyzer = self.route_analyzer
 
-        # Build hash-to-name and hash-to-pubkey lookups from all MeshCore backend contacts
+        # Build hash-to-name and hash-to-pubkey lookups from live contacts + DB
         hash_to_names: dict[str, list[str]] = {}
         hash_to_pubkeys: dict[str, list[str]] = {}
+        seen_keys: set[str] = set()
+
+        # Source 1: live MeshCore contacts
         for backend in self.backends:
             if backend.backend_type == BackendType.MESHCORE:
                 for prefix, contact in backend._contacts.items():
@@ -1786,6 +1789,35 @@ class MeshtasticTool:
                         name = contact.get('adv_name', '') or prefix
                         hash_to_names.setdefault(h, []).append(name)
                         hash_to_pubkeys.setdefault(h, []).append(full_key[:12])
+                        seen_keys.add(full_key.lower())
+
+        # Source 2: historical NODEINFO packets (fills gaps after restart)
+        try:
+            with self.db_handler.lock:
+                self.db_handler.cursor.execute(
+                    "SELECT DISTINCT raw_packet FROM packets "
+                    "WHERE port_name IN ('NODEINFO','NODEINFO_APP') "
+                    "AND backend='meshcore' ORDER BY timestamp DESC"
+                )
+                db_rows = self.db_handler.cursor.fetchall()
+        except Exception:
+            db_rows = []
+
+        for (raw_json,) in db_rows:
+            try:
+                raw = json.loads(raw_json) if isinstance(raw_json, str) else raw_json
+                full_key = raw.get('public_key', '')
+                if not full_key or full_key.lower() in seen_keys:
+                    continue
+                if len(full_key) >= 2:
+                    h = full_key[:2].lower()
+                    name = raw.get('adv_name', '')
+                    if name:
+                        hash_to_names.setdefault(h, []).append(name)
+                        hash_to_pubkeys.setdefault(h, []).append(full_key[:12])
+                        seen_keys.add(full_key.lower())
+            except (json.JSONDecodeError, TypeError):
+                pass
 
         # Build graph from adjacency cache
         # For the graph, expand hash-level adjacency into per-node entries
