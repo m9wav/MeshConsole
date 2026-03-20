@@ -592,3 +592,55 @@ class TestCoordRefresh:
         assert geo.coord_count == 1
         assert geo.get_coords('Bad') is None
         assert geo.get_coords('Good') == (52.0, 0.5)
+
+
+# ══════════════════════════════════════════════════════════════════
+# Relaxed learning tests (v3.6.0)
+# ══════════════════════════════════════════════════════════════════
+
+class TestRelaxedLearning:
+    """Learning from high-confidence (non-unique) hops."""
+
+    def test_learn_from_high_confidence_hop(self, analyzer):
+        """A hop with confidence >= 0.7 should contribute to learning."""
+        hops = [
+            make_hop('aa', 'Alpha', 1),
+            make_hop('bb', 'Bravo', 3, ['Bravo', 'Beta', 'Baker']),
+        ]
+        hops[1]['confidence'] = 0.8
+        analyzer.learn_route(hops)
+        assert analyzer.total_observations > 0
+
+    def test_no_learn_from_low_confidence_hop(self, analyzer):
+        """A hop with confidence < 0.7 should NOT contribute."""
+        hops = [
+            make_hop('aa', None, 0),
+            make_hop('bb', 'Bravo', 3, ['Bravo', 'Beta', 'Baker']),
+        ]
+        hops[1]['confidence'] = 0.5
+        analyzer.learn_route(hops)
+        assert analyzer.total_observations == 0
+
+    def test_learn_uses_resolved_name(self, analyzer):
+        """Resolved-but-ambiguous hop uses the Phase 2 name."""
+        for _ in range(10):
+            hops = [
+                make_hop('aa', 'Alpha', 1),
+                make_hop('bb', 'Bravo', 2, ['Bravo', 'Beta']),
+            ]
+            hops[1]['confidence'] = 0.8
+            analyzer.learn_route(hops)
+
+        ranked = analyzer.resolve_ambiguous_hop('bb', ['aa'], ['Bravo', 'Beta'])
+        assert ranked[0][0] == 'Bravo'
+
+    def test_bootstrap_from_two_resolved(self, analyzer):
+        """Two non-unique but high-confidence hops learn from each other."""
+        hops = [
+            make_hop('aa', 'Alpha', 3, ['Alpha', 'Alt1', 'Alt2']),
+            make_hop('bb', 'Bravo', 2, ['Bravo', 'Beta']),
+        ]
+        hops[0]['confidence'] = 0.75
+        hops[1]['confidence'] = 0.8
+        analyzer.learn_route(hops)
+        assert analyzer.total_observations > 0

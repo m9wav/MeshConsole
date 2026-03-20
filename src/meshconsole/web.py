@@ -475,7 +475,11 @@ def create_app(orchestrator):
     def get_mesh_graph():
         """Return graph data for D3.js mesh topology visualization."""
         try:
-            graph_data = orchestrator.get_mesh_graph_data()
+            max_nodes = int(request.args.get('max_nodes', 80))
+            min_count = int(request.args.get('min_count', 2))
+            graph_data = orchestrator.get_mesh_graph_data(
+                max_nodes=max_nodes, min_count=min_count
+            )
             return jsonify(graph_data)
         except Exception as e:
             logger.error(f"Error fetching mesh graph data: {e}")
