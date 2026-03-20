@@ -471,6 +471,99 @@ def create_app(orchestrator):
             logger.error(f"Error sending flood advertisement: {e}")
             return jsonify({'success': False, 'error': str(e)}), 500
 
+    @app.route('/network-map-data')
+    def network_map_data():
+        """Return all nodes with their last known coordinates for the map."""
+        try:
+            nodes_with_coords = []
+            seen_ids = set()
+
+            # Source 1: live MeshCore contacts with coordinates
+            for b in getattr(orchestrator, 'backends', []):
+                if not b.is_connected:
+                    continue
+                try:
+                    live_nodes = b.get_nodes()
+                    for node_id, un in live_nodes.items():
+                        if node_id in seen_ids:
+                            continue
+                        if un.latitude and un.longitude:
+                            seen_ids.add(node_id)
+                            nodes_with_coords.append({
+                                'id': node_id,
+                                'name': un.display_name or node_id,
+                                'lat': un.latitude,
+                                'lon': un.longitude,
+                                'backend': b.backend_type.value,
+                                'last_seen': un.last_seen or '',
+                                'is_local': node_id == b.local_node_id,
+                            })
+                except Exception:
+                    pass
+
+            # Source 2: position packets from DB (meshtastic + meshcore)
+            with orchestrator.db_handler.lock:
+                orchestrator.db_handler.cursor.execute('''
+                    SELECT from_id, raw_packet, timestamp, backend
+                    FROM packets
+                    WHERE port_name IN ('POSITION_APP', 'NODEINFO', 'NODEINFO_APP')
+                    ORDER BY timestamp DESC
+                ''')
+                rows = orchestrator.db_handler.cursor.fetchall()
+
+            for row in rows:
+                from_id = row[0]
+                if from_id in seen_ids:
+                    continue
+                try:
+                    raw = json.loads(row[1]) if row[1] else {}
+                    pkt_backend = row[3] if len(row) > 3 else 'meshtastic'
+
+                    lat = lon = None
+                    name = from_id
+                    if pkt_backend == 'meshcore':
+                        lat = raw.get('adv_lat') or raw.get('latitude')
+                        lon = raw.get('adv_lon') or raw.get('longitude')
+                        name = raw.get('adv_name', '') or from_id
+                    else:
+                        pos = raw.get('decoded', {}).get('position', {})
+                        lat = pos.get('latitude')
+                        lon = pos.get('longitude')
+                        user = raw.get('decoded', {}).get('user', {})
+                        name = user.get('longName', '') or from_id
+
+                    if lat and lon and abs(float(lat)) > 0.01:
+                        seen_ids.add(from_id)
+                        live_name = orchestrator.resolve_node_name(from_id)
+                        nodes_with_coords.append({
+                            'id': from_id,
+                            'name': live_name if live_name != from_id else name,
+                            'lat': float(lat),
+                            'lon': float(lon),
+                            'backend': pkt_backend,
+                            'last_seen': row[2] or '',
+                            'is_local': from_id == orchestrator.local_node_id,
+                        })
+                except (json.JSONDecodeError, ValueError, TypeError):
+                    continue
+
+            # Add local node if it has coordinates and wasn't found
+            for b in getattr(orchestrator, 'backends', []):
+                if b.local_node_id and b.local_node_id not in seen_ids:
+                    nodes_with_coords.append({
+                        'id': b.local_node_id,
+                        'name': getattr(b, '_device_name', '') or b.local_node_id,
+                        'lat': None, 'lon': None,
+                        'backend': b.backend_type.value,
+                        'last_seen': '',
+                        'is_local': True,
+                    })
+
+            return jsonify({'nodes': nodes_with_coords})
+        except Exception as e:
+            logger.error(f"Error fetching network map data: {e}")
+            return jsonify({'nodes': [], 'error': str(e)}), 500
+
     @app.route('/mesh-graph')
     def get_mesh_graph():
         """Return graph data for D3.js mesh topology visualization."""

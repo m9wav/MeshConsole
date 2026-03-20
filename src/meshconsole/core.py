@@ -1919,12 +1919,52 @@ class MeshtasticTool:
         # so they don't cluster near nodes they aren't actually next to.
         node_conf = {n['id']: n.get('confidence', 0) for n in nodes}
 
+        # Build nid->name lookup for _pick_representatives
+        nid_to_name = {n['id']: n['name'] for n in nodes}
+
         def _pick_representatives(nids):
-            """From a set of node IDs sharing a hash, return only the
-            ones that should receive edges.  If any has confidence >= 0.7
-            return only those; otherwise return all."""
+            """From a set of node IDs sharing a hash, return the best
+            candidate to receive edges.  Uses confidence first, then
+            geo proximity to resolved neighbors as tiebreaker."""
+            if len(nids) <= 1:
+                return nids
             high = [nid for nid in nids if node_conf.get(nid, 0) >= 0.7]
-            return high if high else nids
+            if high:
+                return high
+            # Tiebreak: find resolved unique neighbors of this hash,
+            # pick the candidate geographically closest to them
+            sample_hash = next((n['hash'] for n in nodes if n['id'] == nids[0]), None)
+            if sample_hash and analyzer._geo.coord_count > 0:
+                # Collect coords of unique neighbors
+                nbr_coords = []
+                with analyzer._lock:
+                    seen_nbr = set()
+                    for (nh, nbr), _ in analyzer._cache.items():
+                        if nh == sample_hash and nbr not in seen_nbr:
+                            seen_nbr.add(nbr)
+                            nbr_names = hash_to_names.get(nbr, [])
+                            if len(nbr_names) == 1:
+                                c = analyzer._geo.get_coords(nbr_names[0])
+                                if c:
+                                    nbr_coords.append(c)
+                if nbr_coords:
+                    # Score each candidate by avg distance to unique neighbors
+                    best_nid = None
+                    best_dist = float('inf')
+                    for nid in nids:
+                        name = nid_to_name.get(nid, '')
+                        c = analyzer._geo.get_coords(name)
+                        if not c:
+                            continue
+                        avg = sum(analyzer._geo._haversine(c[0], c[1], nc[0], nc[1]) for nc in nbr_coords) / len(nbr_coords)
+                        if avg < best_dist:
+                            best_dist = avg
+                            best_nid = nid
+                    if best_nid:
+                        return [best_nid]
+            # Fallback: highest confidence
+            best = max(nids, key=lambda nid: node_conf.get(nid, 0))
+            return [best]
 
         links = []
         link_set = set()

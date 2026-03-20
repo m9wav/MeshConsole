@@ -377,6 +377,8 @@
         .route-trail .hop-local {
         }
 
+        /* Mesh Map */
+
         /* Backend badges */
         .backend-badge {
             font-size: 0.7rem;
@@ -777,6 +779,11 @@
                         <i class="bi bi-diagram-2"></i> Mesh Graph
                     </button>
                 </li>
+                <li class="nav-item" role="presentation" id="network-map-tab-item">
+                    <button class="nav-link" id="network-map-tab" data-bs-toggle="tab" data-bs-target="#network-map" type="button" role="tab">
+                        <i class="bi bi-geo-alt"></i> Mesh Map
+                    </button>
+                </li>
                 <li class="nav-item" role="presentation">
                     <button class="nav-link" id="stats-tab" data-bs-toggle="tab" data-bs-target="#stats" type="button" role="tab">
                         <i class="bi bi-graph-up"></i> Statistics
@@ -1049,6 +1056,29 @@
                             <span id="graph-node-count">0</span> nodes, <span id="graph-link-count">0</span> links<span id="graph-total-info"></span>
                         </div>
                         <div class="mesh-graph-tooltip" id="mesh-graph-tooltip"></div>
+                    </div>
+                </div>
+
+                <!-- Mesh Map Tab -->
+                <div class="tab-pane fade" id="network-map" role="tabpanel">
+                    <div class="network-map-wrapper" style="position:relative;">
+                        <div id="network-map-container" style="height:calc(100vh - 160px);min-height:500px;border-radius:12px;overflow:hidden;background:#1a1a2e;"></div>
+                        <div id="network-map-controls" style="position:absolute;top:12px;right:12px;z-index:1000;display:flex;flex-direction:column;gap:6px;">
+                            <button class="btn btn-sm btn-light shadow-sm" onclick="networkMapHome()" title="Jump to Home Node"><i class="bi bi-house"></i></button>
+                            <button class="btn btn-sm btn-light shadow-sm" onclick="networkMapFitAll()" title="Fit All Nodes"><i class="bi bi-arrows-fullscreen"></i></button>
+                            <button class="btn btn-sm btn-light shadow-sm" onclick="networkMapRefresh()" title="Refresh"><i class="bi bi-arrow-clockwise"></i></button>
+                            <button class="btn btn-sm btn-light shadow-sm" onclick="networkMapToggleRoutes()" title="Toggle Routes" id="network-map-routes-btn"><i class="bi bi-signpost-2"></i></button>
+                        </div>
+                        <div id="network-map-stats" style="position:absolute;bottom:12px;left:12px;z-index:1000;background:rgba(0,0,0,0.7);color:#fff;padding:6px 12px;border-radius:8px;font-size:0.8rem;">
+                            <span id="map-node-count">0</span> nodes on map
+                        </div>
+                        <div id="network-map-tip" style="position:absolute;z-index:1001;pointer-events:none;opacity:0;transition:opacity 0.12s;background:rgba(15,23,42,0.92);color:#e2e8f0;border:1px solid rgba(99,102,241,0.3);border-radius:6px;padding:3px 10px;font-size:0.78rem;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.3);"></div>
+                        <div id="network-map-legend" style="position:absolute;bottom:12px;right:12px;z-index:1000;background:rgba(0,0,0,0.7);color:#fff;padding:8px 12px;border-radius:8px;font-size:0.75rem;">
+                            <div><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#2563eb;margin-right:4px;"></span> MeshCore</div>
+                            <div><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#94a3b8;margin-right:4px;"></span> Meshtastic</div>
+                            <div><span style="display:inline-block;width:10px;height:3px;background:#6366f1;margin-right:4px;vertical-align:middle;"></span> Trunk link</div>
+                            <div><span style="display:inline-block;width:10px;height:3px;background:#f59e0b;margin-right:4px;vertical-align:middle;"></span> High-volume trunk</div>
+                        </div>
                     </div>
                 </div>
 
@@ -1469,11 +1499,13 @@
                 });
             }
 
-            // Tab switching
+            // Tab switching — activate on show, teardown on hide to save RAM
             document.querySelectorAll('[data-bs-toggle="tab"]').forEach(tab => {
                 tab.addEventListener('shown.bs.tab', function(e) {
                     const target = e.target.getAttribute('data-bs-target');
-                    if (target === '#nodes') {
+                    if (target === '#packets') {
+                        startAutoRefresh();
+                    } else if (target === '#nodes') {
                         fetchNodes();
                     } else if (target === '#stats') {
                         fetchStats();
@@ -1481,8 +1513,21 @@
                         if (!appState.meshGraphLoaded) {
                             fetchMeshGraph();
                         }
+                    } else if (target === '#network-map') {
+                        initNetworkMap();
                     } else if (target === '#flood') {
                         loadFloodDevices();
+                    }
+                });
+                tab.addEventListener('hidden.bs.tab', function(e) {
+                    const target = e.target.getAttribute('data-bs-target');
+                    if (target === '#packets' && appState.autoRefreshTimer) {
+                        clearInterval(appState.autoRefreshTimer);
+                        appState.autoRefreshTimer = null;
+                    } else if (target === '#network-map') {
+                        teardownNetworkMap();
+                    } else if (target === '#mesh-graph') {
+                        teardownMeshGraph();
                     }
                 });
             });
@@ -3533,6 +3578,459 @@
         // Load settings when page loads
         document.addEventListener('DOMContentLoaded', loadSettings);
 
+        // ── Mesh Map ──────────────────────────────────────────
+
+        let networkMapState = {
+            map: null,
+            markers: {},        // id -> marker
+            markerGroup: null,
+            trunkLayer: null,
+            trunksVisible: true,
+            data: null,
+            initialized: false,
+        };
+
+        function initNetworkMap() {
+            if (networkMapState.initialized && networkMapState.map) {
+                networkMapState.map.invalidateSize();
+                return;
+            }
+
+            const container = document.getElementById('network-map-container');
+            if (!container) return;
+
+            const map = L.map(container, {
+                zoomControl: false,
+                attributionControl: true,
+            }).setView([52.0, -2.0], 6);
+
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
+                maxZoom: 19,
+                subdomains: 'abcd',
+            }).addTo(map);
+
+            L.control.zoom({position: 'topleft'}).addTo(map);
+
+            networkMapState.map = map;
+            networkMapState.markerGroup = L.featureGroup().addTo(map);
+            networkMapState.trunkLayer = L.layerGroup().addTo(map);
+            networkMapState.initialized = true;
+
+            // Bind zoom/pan handler directly on the map
+            map.on('moveend zoomend', _dynamicNodeUpdate);
+
+            // Sync trunk button state
+            const routeBtn = document.getElementById('network-map-routes-btn');
+            if (routeBtn) {
+                if (networkMapState.trunksVisible) {
+                    routeBtn.classList.add('btn-primary');
+                    routeBtn.classList.remove('btn-light');
+                } else {
+                    routeBtn.classList.remove('btn-primary');
+                    routeBtn.classList.add('btn-light');
+                }
+            }
+
+            loadNetworkMapData();
+        }
+
+        function loadNetworkMapData() {
+            Promise.all([
+                fetch('/network-map-data').then(r => r.json()),
+                fetch('/mesh-graph?max_nodes=0&min_count=5').then(r => r.json()).catch(() => ({nodes:[], links:[]})),
+            ]).then(([mapData, graphData]) => {
+                networkMapState.data = mapData;
+                networkMapState.graphData = graphData;
+                renderNetworkMapNodes(mapData.nodes || []);
+                if (networkMapState.trunksVisible) {
+                    renderTrunkLines(mapData.nodes || [], graphData);
+                    if (networkMapState.map && networkMapState.trunkLayer &&
+                        !networkMapState.map.hasLayer(networkMapState.trunkLayer)) {
+                        networkMapState.map.addLayer(networkMapState.trunkLayer);
+                    }
+                }
+            }).catch(err => console.error('Network map error:', err));
+        }
+
+        function _buildMarker(node) {
+            const color = node.backend === 'meshcore' ? '#2563eb' : '#94a3b8';
+            // Visible marker
+            const marker = L.circleMarker([node.lat, node.lon], {
+                radius: 6, fillColor: color, color: '#fff',
+                weight: 1.5, fillOpacity: 0.7,
+                // Larger interactive area prevents tooltip jitter
+                bubblingMouseEvents: false,
+            });
+            marker._nodeData = node;
+            const lastSeen = node.last_seen ? new Date(node.last_seen).toLocaleString() : '';
+            const tipHtml = `<strong>${node.name}</strong>${node.is_local ? ' (you)' : ''}<br><span style="opacity:0.7">${node.backend} · ${lastSeen}</span>`;
+            marker.on('mouseover', function() {
+                const tip = document.getElementById('network-map-tip');
+                if (tip) { tip.innerHTML = tipHtml; tip.style.opacity = '1'; }
+            });
+            marker.on('mousemove', function(e) {
+                const tip = document.getElementById('network-map-tip');
+                if (!tip) return;
+                const rect = document.getElementById('network-map-container').getBoundingClientRect();
+                tip.style.left = (e.originalEvent.clientX - rect.left + 14) + 'px';
+                tip.style.top = (e.originalEvent.clientY - rect.top - 40) + 'px';
+            });
+            marker.on('mouseout', function() {
+                const tip = document.getElementById('network-map-tip');
+                if (tip) tip.style.opacity = '0';
+            });
+            marker.on('click', function(e) {
+                L.DomEvent.stopPropagation(e);
+                highlightNodeTrunks(node.name);
+            });
+            return marker;
+        }
+
+        function renderNetworkMapNodes(nodes) {
+            const map = networkMapState.map;
+            if (!map) return;
+
+            networkMapState.markerGroup.clearLayers();
+            networkMapState.markers = {};
+
+            const nodesWithCoords = nodes.filter(n => n.lat && n.lon);
+
+            // Sort by recency
+            nodesWithCoords.sort((a, b) => {
+                const ta = a.last_seen ? new Date(a.last_seen).getTime() : 0;
+                const tb = b.last_seen ? new Date(b.last_seen).getTime() : 0;
+                return tb - ta;
+            });
+
+            networkMapState.allNodes = nodesWithCoords;
+            // Core set: top 50 most recent — always shown regardless of viewport
+            networkMapState.coreIds = new Set(nodesWithCoords.slice(0, 50).map(n => n.id));
+
+            // Also include any node that's a trunk endpoint so lines don't dangle
+            const trunkNames = new Set();
+            const graphLinks = (networkMapState.graphData && networkMapState.graphData.links) || [];
+            const graphNodes = (networkMapState.graphData && networkMapState.graphData.nodes) || [];
+            const gIdToName = {};
+            graphNodes.forEach(n => { gIdToName[n.id] = n.name; });
+            graphLinks.filter(l => l.count >= 10).slice(0, 40).forEach(l => {
+                trunkNames.add(gIdToName[l.source] || l.source);
+                trunkNames.add(gIdToName[l.target] || l.target);
+            });
+            nodesWithCoords.forEach(n => {
+                if (trunkNames.has(n.name)) networkMapState.coreIds.add(n.id);
+            });
+
+            // Add initial core nodes
+            const coreNodes = nodesWithCoords.filter(n => networkMapState.coreIds.has(n.id));
+            coreNodes.forEach(node => {
+                const marker = _buildMarker(node);
+                networkMapState.markers[node.id] = marker;
+                networkMapState.markerGroup.addLayer(marker);
+            });
+
+            _updateMapStats();
+
+            // Smart centering: interquartile to ignore outliers
+            if (nodesWithCoords.length > 4) {
+                const lats = nodesWithCoords.map(n => n.lat).sort((a, b) => a - b);
+                const lons = nodesWithCoords.map(n => n.lon).sort((a, b) => a - b);
+                const q = (arr, p) => arr[Math.floor(arr.length * p)];
+                const bounds = L.latLngBounds(
+                    [q(lats, 0.05), q(lons, 0.05)],
+                    [q(lats, 0.95), q(lons, 0.95)]
+                );
+                map.fitBounds(bounds, {padding: [50, 50], maxZoom: 10});
+            } else if (nodesWithCoords.length > 0) {
+                const bounds = networkMapState.markerGroup.getBounds();
+                map.fitBounds(bounds, {padding: [40, 40], maxZoom: 10});
+            }
+
+            // Trigger dynamic update after initial fitBounds settles
+            setTimeout(_dynamicNodeUpdate, 600);
+        }
+
+        function _dynamicNodeUpdate() {
+            const map = networkMapState.map;
+            if (!map || !networkMapState.allNodes) return;
+
+            const bounds = map.getBounds().pad(0.1);
+            const zoom = map.getZoom();
+            const coreIds = networkMapState.coreIds || new Set();
+
+            // At low zoom: only core nodes. Higher zoom reveals more.
+            // z6=core only, z8=150, z10=300, z12+=all in viewport
+            const maxVisible = zoom >= 12 ? 9999 : zoom >= 10 ? 300 : zoom >= 8 ? 150 : 0;
+
+            // Remove non-core nodes outside viewport OR over budget at low zoom
+            const toRemove = [];
+            let nonCoreInView = 0;
+            for (const [id, marker] of Object.entries(networkMapState.markers)) {
+                if (coreIds.has(id)) continue;
+                if (!bounds.contains(marker.getLatLng())) {
+                    toRemove.push(id);
+                } else {
+                    nonCoreInView++;
+                }
+            }
+            // If we're over budget at this zoom, remove furthest non-core nodes
+            if (nonCoreInView > maxVisible) {
+                const excess = [];
+                for (const [id, marker] of Object.entries(networkMapState.markers)) {
+                    if (coreIds.has(id)) continue;
+                    if (bounds.contains(marker.getLatLng())) {
+                        excess.push(id);
+                    }
+                }
+                // Remove oldest excess (they were added first)
+                excess.slice(maxVisible).forEach(id => toRemove.push(id));
+            }
+            toRemove.forEach(id => {
+                if (networkMapState.markers[id]) {
+                    networkMapState.markerGroup.removeLayer(networkMapState.markers[id]);
+                    delete networkMapState.markers[id];
+                }
+            });
+
+            // Add nodes in viewport up to budget
+            if (maxVisible > 0) {
+                let currentNonCore = 0;
+                for (const [id, marker] of Object.entries(networkMapState.markers)) {
+                    if (!coreIds.has(id)) currentNonCore++;
+                }
+                const canAdd = maxVisible - currentNonCore;
+                let added = 0;
+                for (const node of networkMapState.allNodes) {
+                    if (added >= canAdd) break;
+                    if (networkMapState.markers[node.id]) continue;
+                    if (!bounds.contains([node.lat, node.lon])) continue;
+                    const marker = _buildMarker(node);
+                    networkMapState.markers[node.id] = marker;
+                    networkMapState.markerGroup.addLayer(marker);
+                    added++;
+                }
+            }
+
+            _updateMapStats();
+        }
+
+        function _updateMapStats() {
+            const shown = Object.keys(networkMapState.markers).length;
+            const total = networkMapState.allNodes ? networkMapState.allNodes.length : shown;
+            const el = document.getElementById('map-node-count');
+            if (el) el.textContent = total > shown ? `${shown} of ${total}` : `${shown}`;
+        }
+
+        function renderTrunkLines(nodes, graphData) {
+            const map = networkMapState.map;
+            if (!map) return;
+
+            networkMapState.trunkLayer.clearLayers();
+
+            // Build name->coords from map nodes
+            const coordByName = {};
+            nodes.forEach(n => {
+                if (n.lat && n.lon && n.name) coordByName[n.name] = [n.lat, n.lon];
+            });
+
+            // Build graph id->name lookup
+            const idToName = {};
+            (graphData.nodes || []).forEach(n => {
+                if (n.name && !n.name.startsWith('h:')) idToName[n.id] = n.name;
+            });
+
+            // Haversine for distance filtering
+            function _havKm(a, b) {
+                const R = 6371, r = Math.PI / 180;
+                const dl = (b[0]-a[0])*r, dn = (b[1]-a[1])*r;
+                const x = Math.sin(dl/2)**2 + Math.cos(a[0]*r)*Math.cos(b[0]*r)*Math.sin(dn/2)**2;
+                return R*2*Math.atan2(Math.sqrt(x), Math.sqrt(1-x));
+            }
+
+            // Filter: both endpoints have coords + real names.
+            // Distance limit scales with observation count —
+            // high-traffic links are allowed to be longer (hilltop repeaters)
+            // Low-traffic long links are likely hash collision artifacts.
+            function _maxKmForCount(count) {
+                if (count >= 50) return 120;  // high traffic: trust up to 120km
+                if (count >= 20) return 100;  // medium: up to 100km
+                return 70;                     // low: conservative 70km
+            }
+            const drawable = (graphData.links || [])
+                .map(l => {
+                    const sn = idToName[l.source];
+                    const tn = idToName[l.target];
+                    if (!sn || !tn) return null;
+                    const sc = coordByName[sn];
+                    const tc = coordByName[tn];
+                    if (!sc || !tc) return null;
+                    const dist = _havKm(sc, tc);
+                    if (dist > _maxKmForCount(l.count)) return null;
+                    return {srcName: sn, tgtName: tn, srcCoord: sc, tgtCoord: tc, count: l.count, dist: Math.round(dist)};
+                })
+                .filter(Boolean)
+                .sort((a, b) => b.count - a.count)
+                .slice(0, 40);
+
+            if (drawable.length === 0) return;
+
+            const maxCount = drawable[0].count;
+            const goldThreshold = drawable[Math.floor(drawable.length * 0.2)]?.count || maxCount;
+
+            drawable.forEach(t => {
+                const norm = t.count / maxCount;
+                const isGold = t.count >= goldThreshold;
+
+                const line = L.polyline([t.srcCoord, t.tgtCoord], {
+                    color: isGold ? '#f59e0b' : '#6366f1',
+                    weight: isGold ? 2 + norm * 3 : 1 + norm * 2,
+                    opacity: isGold ? 0.4 + norm * 0.4 : 0.15 + norm * 0.3,
+                    smoothFactor: 2,
+                    interactive: true,
+                });
+                const trunkTip = `<strong>${t.srcName}</strong> ↔ <strong>${t.tgtName}</strong><br>${t.count} obs · ${t.dist}km`;
+                line.on('mouseover', function() {
+                    const tip = document.getElementById('network-map-tip');
+                    if (tip) { tip.innerHTML = trunkTip; tip.style.opacity = '1'; }
+                });
+                line.on('mousemove', function(e) {
+                    const tip = document.getElementById('network-map-tip');
+                    if (!tip) return;
+                    const rect = document.getElementById('network-map-container').getBoundingClientRect();
+                    tip.style.left = (e.originalEvent.clientX - rect.left + 14) + 'px';
+                    tip.style.top = (e.originalEvent.clientY - rect.top - 40) + 'px';
+                });
+                line.on('mouseout', function() {
+                    const tip = document.getElementById('network-map-tip');
+                    if (tip) tip.style.opacity = '0';
+                });
+                networkMapState.trunkLayer.addLayer(line);
+            });
+        }
+
+        function networkMapHome() {
+            if (!networkMapState.map || !networkMapState.data) return;
+            const local = (networkMapState.data.nodes || []).find(n => n.is_local && n.lat && n.lon);
+            if (local) {
+                networkMapState.map.flyTo([local.lat, local.lon], 10, {duration: 1.2});
+            }
+        }
+
+        function networkMapFitAll() {
+            if (!networkMapState.map || !networkMapState.markerGroup) return;
+            const bounds = networkMapState.markerGroup.getBounds();
+            if (bounds.isValid()) {
+                networkMapState.map.flyToBounds(bounds, {padding: [40, 40], maxZoom: 10, duration: 1});
+            }
+        }
+
+        function networkMapRefresh() {
+            loadNetworkMapData();
+        }
+
+        function teardownNetworkMap() {
+            if (networkMapState.map) {
+                networkMapState.map.off();
+                networkMapState.map.remove();
+                networkMapState.map = null;
+            }
+            networkMapState.markerGroup = null;
+            networkMapState.trunkLayer = null;
+            networkMapState.markers = {};
+            networkMapState.allNodes = null;
+            networkMapState.data = null;
+            networkMapState.graphData = null;
+            networkMapState.initialized = false;
+        }
+
+        function networkMapToggleRoutes() {
+            const layer = networkMapState.trunkLayer;
+            const btn = document.getElementById('network-map-routes-btn');
+            if (!networkMapState.map || !layer) return;
+            if (networkMapState.map.hasLayer(layer)) {
+                networkMapState.map.removeLayer(layer);
+                networkMapState.trunksVisible = false;
+                btn.classList.remove('btn-primary');
+                btn.classList.add('btn-light');
+            } else {
+                // Redraw trunks if the layer is empty (after teardown/refresh)
+                if (layer.getLayers().length === 0 && networkMapState.data && networkMapState.graphData) {
+                    renderTrunkLines(networkMapState.data.nodes || [], networkMapState.graphData);
+                }
+                networkMapState.map.addLayer(layer);
+                networkMapState.trunksVisible = true;
+                btn.classList.add('btn-primary');
+                btn.classList.remove('btn-light');
+            }
+        }
+
+        function highlightNodeTrunks(nodeName) {
+            const layer = networkMapState.trunkLayer;
+            if (!layer) return;
+
+            // If clicking the same node again, or no name, clear highlight
+            if (networkMapState.highlightedMapNode === nodeName) {
+                networkMapState.highlightedMapNode = null;
+                // Restore all trunks to normal
+                layer.eachLayer(l => {
+                    l.setStyle({opacity: l._origOpacity || 0.3, weight: l._origWeight || 2});
+                });
+                // Restore all markers
+                Object.values(networkMapState.markers).forEach(m => m.setStyle({fillOpacity: m._origOpacity || 0.7}));
+                return;
+            }
+
+            networkMapState.highlightedMapNode = nodeName;
+
+            // Dim all trunks, brighten matching ones
+            const connectedNodes = new Set([nodeName]);
+            layer.eachLayer(l => {
+                const tip = l.getTooltip();
+                const content = tip ? tip.getContent() : '';
+                const matches = content.includes(nodeName);
+                if (!l._origOpacity) { l._origOpacity = l.options.opacity; l._origWeight = l.options.weight; }
+                if (matches) {
+                    l.setStyle({opacity: 0.9, weight: l._origWeight * 1.5});
+                    // Extract the other node name from "A ↔ B" tooltip
+                    const parts = content.split(' ↔ ');
+                    if (parts.length >= 2) {
+                        const otherRaw = parts[0] === nodeName ? parts[1] : parts[0];
+                        connectedNodes.add(otherRaw.split('<br>')[0]);
+                    }
+                } else {
+                    l.setStyle({opacity: 0.04, weight: 1});
+                }
+            });
+
+            // Dim unconnected markers
+            Object.values(networkMapState.markers).forEach(m => {
+                const nd = m._nodeData || {};
+                if (!m._origOpacity) m._origOpacity = m.options.fillOpacity;
+                if (connectedNodes.has(nd.name || nd.id)) {
+                    m.setStyle({fillOpacity: 0.95});
+                } else {
+                    m.setStyle({fillOpacity: 0.1});
+                }
+            });
+        }
+
+        // Click map background to clear highlight
+        function setupMapClickClear() {
+            if (!networkMapState.map) return;
+            networkMapState.map.on('click', function(e) {
+                if (networkMapState.highlightedMapNode) {
+                    highlightNodeTrunks(networkMapState.highlightedMapNode); // toggle off
+                }
+            });
+        }
+
+        // Hook into map init
+        const _origInitNetworkMap = initNetworkMap;
+        initNetworkMap = function() {
+            _origInitNetworkMap();
+            setupMapClickClear();
+        };
+
         // ── Flood Advertisement ─────────────────────────────────
 
         function loadFloodDevices() {
@@ -3919,6 +4417,27 @@
             meshGraphState.svg.transition().duration(300).call(
                 meshGraphState.zoom.scaleBy, factor
             );
+        }
+
+        function teardownMeshGraph() {
+            if (meshGraphState.simulation) {
+                meshGraphState.simulation.stop();
+                meshGraphState.simulation = null;
+            }
+            const container = document.getElementById('mesh-graph-container');
+            if (container) {
+                const svg = container.querySelector('svg');
+                if (svg) svg.remove();
+            }
+            meshGraphState.svg = null;
+            meshGraphState.nodeEls = null;
+            meshGraphState.linkEls = null;
+            meshGraphState.labelEls = null;
+            meshGraphState.data = null;
+            meshGraphState.g = null;
+            meshGraphState.highlightedNode = null;
+            meshGraphState.lockedNode = null;
+            appState.meshGraphLoaded = false;
         }
 
         function meshGraphReset() {
