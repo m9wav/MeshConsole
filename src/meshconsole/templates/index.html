@@ -1021,6 +1021,15 @@
                             <button onclick="meshGraphZoom(1.3)" title="Zoom In"><i class="bi bi-plus"></i></button>
                             <button onclick="meshGraphZoom(0.77)" title="Zoom Out"><i class="bi bi-dash"></i></button>
                             <button onclick="meshGraphReset()" title="Reset View"><i class="bi bi-arrows-fullscreen"></i></button>
+                            <button onclick="meshGraphHome()" title="Jump to Home Node"><i class="bi bi-house"></i></button>
+                            <button onclick="meshGraphRefresh()" title="Refresh Graph"><i class="bi bi-arrow-clockwise"></i></button>
+                            <div style="margin-top:6px;display:flex;align-items:center;gap:4px;">
+                                <small style="opacity:0.7;white-space:nowrap;">Nodes</small>
+                                <input type="range" id="graph-max-nodes" min="20" max="200" value="80" step="10"
+                                       style="width:80px;accent-color:#2563eb;" title="Max nodes to display"
+                                       onchange="meshGraphState.maxNodes=+this.value;meshGraphRefresh();">
+                                <small id="graph-max-label" style="opacity:0.7;">80</small>
+                            </div>
                         </div>
                         <div class="mesh-graph-legend" id="mesh-graph-legend" style="display:none;">
                             <div class="mesh-graph-legend-item">
@@ -1037,7 +1046,7 @@
                             </div>
                         </div>
                         <div class="mesh-graph-stats" id="mesh-graph-stats" style="display:none;">
-                            <span id="graph-node-count">0</span> nodes, <span id="graph-link-count">0</span> links
+                            <span id="graph-node-count">0</span> nodes, <span id="graph-link-count">0</span> links<span id="graph-total-info"></span>
                         </div>
                         <div class="mesh-graph-tooltip" id="mesh-graph-tooltip"></div>
                     </div>
@@ -3616,10 +3625,12 @@
             labelEls: null,
             data: null,
             highlightedNode: null,
+            maxNodes: 80,
         };
 
         function fetchMeshGraph() {
-            fetch('/mesh-graph')
+            const maxNodes = meshGraphState.maxNodes || 80;
+            fetch(`/mesh-graph?max_nodes=${maxNodes}`)
                 .then(r => r.json())
                 .then(data => {
                     appState.meshGraphLoaded = true;
@@ -3657,8 +3668,15 @@
             legendEl.style.display = '';
             statsEl.style.display = '';
 
-            document.getElementById('graph-node-count').textContent = data.nodes.length;
+            const shown = data.nodes.length;
+            const total = data.total_nodes || shown;
+            const linkTotal = data.total_links || data.links.length;
+            document.getElementById('graph-node-count').textContent = shown;
             document.getElementById('graph-link-count').textContent = data.links.length;
+            const totalInfo = document.getElementById('graph-total-info');
+            if (totalInfo) {
+                totalInfo.textContent = total > shown ? ` (of ${total} total, ${linkTotal} links)` : '';
+            }
 
             // Remove old SVG if present
             const oldSvg = container.querySelector('svg');
@@ -3816,31 +3834,7 @@
                     .attr('y', d => d.y);
             });
 
-            // Center on local node — use simple delayed approach
-            const localNode = data.nodes.find(n => n.is_local);
-            if (localNode) {
-                const doCenter = () => {
-                    const ctr = document.getElementById('mesh-graph-container');
-                    if (!ctr || localNode.x === undefined) return;
-                    // Skip if user already jumped to a specific node
-                    if (meshGraphState.lockedNode && meshGraphState.lockedNode !== localNode.id) return;
-                    meshGraphState.svg.call(
-                        meshGraphState.zoom.transform,
-                        d3.zoomIdentity
-                            .translate(ctr.clientWidth / 2, ctr.clientHeight / 2)
-                            .scale(1.5)
-                            .translate(-localNode.x, -localNode.y)
-                    );
-                    // Only highlight if not already highlighted (avoid toggle-off)
-                    if (meshGraphState.highlightedNode !== localNode.id) {
-                        highlightNodeConnections(localNode);
-                    }
-                    meshGraphState.lockedNode = localNode.id;
-                };
-                // Fire at 2s and 4s — by 4s positions have stabilized
-                setTimeout(doCenter, 2000);
-                setTimeout(doCenter, 4000);
-            }
+            // No auto-center — use the Home button (🏠) to jump to local node
 
             function dragStarted(event, d) {
                 if (!event.active) simulation.alphaTarget(0.3).restart();
@@ -3941,6 +3935,28 @@
                 const maxCount = meshGraphState.data ? d3.max(meshGraphState.data.links, d => d.count) || 1 : 1;
                 meshGraphState.linkEls.attr('opacity', l => d3.scaleLinear().domain([1, maxCount]).range([0.2, 0.8])(l.count));
             }
+        }
+
+        function meshGraphHome() {
+            if (!meshGraphState.data || !meshGraphState.svg || !meshGraphState.zoom) return;
+            const localNode = meshGraphState.data.nodes.find(n => n.is_local);
+            if (!localNode || localNode.x === undefined) return;
+            const container = document.getElementById('mesh-graph-container');
+            const cx = container.clientWidth / 2;
+            const cy = container.clientHeight / 2;
+            meshGraphState.svg.transition().duration(800).call(
+                meshGraphState.zoom.transform,
+                d3.zoomIdentity.translate(cx, cy).scale(2).translate(-localNode.x, -localNode.y)
+            );
+            highlightNodeConnections(localNode);
+            meshGraphState.lockedNode = localNode.id;
+        }
+
+        function meshGraphRefresh() {
+            const label = document.getElementById('graph-max-label');
+            if (label) label.textContent = meshGraphState.maxNodes || 80;
+            appState.meshGraphLoaded = false;
+            fetchMeshGraph();
         }
 
         function showNodeInGraph(nodeId) {

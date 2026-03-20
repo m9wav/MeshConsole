@@ -7,13 +7,15 @@
 </p>
 
 <p align="center">
-  <a href="https://pypi.org/project/meshconsole/"><img src="https://img.shields.io/pypi/v/meshconsole?v=3.5.3" alt="PyPI"></a>
+  <a href="https://pypi.org/project/meshconsole/"><img src="https://img.shields.io/pypi/v/meshconsole?v=3.6.0" alt="PyPI"></a>
   <a href="https://m9wav.uk/">m9wav.uk</a>
 </p>
 
 ---
 
 ## What's New
+
+**v3.6.0** -- Smart graph: server-side filtering with importance scoring, home/refresh controls, node slider, bootstrap learning from geo-resolved hops
 
 **v3.5.0** -- Geographic route intelligence: three-phase geo-disambiguation for hash collisions, cascading resolution, confidence-based graph colouring, MeshCore flood advertisement tab
 

@@ -400,33 +400,42 @@ class RouteAnalyzer:
         for i in range(len(hops) - 1):
             left = hops[i]
             right = hops[i + 1]
-            left_unique = left['candidates'] == 1
-            right_unique = right['candidates'] == 1
+            # A hop counts as "resolved" if uniquely matched OR
+            # confidently resolved by geo/adjacency scoring (>= 0.7)
+            left_resolved = (
+                left['candidates'] == 1
+                or (left.get('confidence', 0) >= 0.7 and left.get('name'))
+            )
+            right_resolved = (
+                right['candidates'] == 1
+                or (right.get('confidence', 0) >= 0.7 and right.get('name'))
+            )
 
-            if not left_unique and not right_unique:
-                # Neither hop is uniquely resolved — nothing to learn
+            if not left_resolved and not right_resolved:
                 continue
 
-            # If left is unique, record adjacency for all right candidates
-            if left_unique and right.get('candidate_names'):
-                known_name = left['candidate_names'][0]
+            # If left is resolved, record adjacency for all right candidates
+            if left_resolved and right.get('candidate_names'):
+                known_name = (left['candidate_names'][0]
+                              if left['candidates'] == 1
+                              else left['name'])
                 for candidate in right['candidate_names']:
                     new_observations.append(
                         (right['hash'], left['hash'], candidate, now)
                     )
-                    # Also record the reverse: left appeared next to right
                     new_observations.append(
                         (left['hash'], right['hash'], known_name, now)
                     )
 
-            # If right is unique, record adjacency for all left candidates
-            if right_unique and left.get('candidate_names'):
-                known_name = right['candidate_names'][0]
+            # If right is resolved, record adjacency for all left candidates
+            if right_resolved and left.get('candidate_names'):
+                known_name = (right['candidate_names'][0]
+                              if right['candidates'] == 1
+                              else right['name'])
                 for candidate in left['candidate_names']:
                     new_observations.append(
                         (left['hash'], right['hash'], candidate, now)
                     )
-                    # Also record the reverse
                     new_observations.append(
                         (right['hash'], left['hash'], known_name, now)
                     )
@@ -1758,7 +1767,7 @@ class MeshtasticTool:
 
         return hops
 
-    def get_mesh_graph_data(self) -> dict:
+    def get_mesh_graph_data(self, max_nodes: int = 0, min_count: int = 2) -> dict:
         """Return graph data for D3.js force-directed visualization.
 
         Reads from the RouteAnalyzer's adjacency cache and the node hash
@@ -1983,7 +1992,45 @@ class MeshtasticTool:
         for n in nodes:
             n['connections'] = sum(1 for l in links if l['source'] == n['id'] or l['target'] == n['id'])
 
-        return {'nodes': nodes, 'links': links}
+        total_nodes = len(nodes)
+        total_links = len(links)
+
+        # ── Server-side filtering for performance ──
+        if max_nodes > 0 and len(nodes) > max_nodes:
+            # Always keep: local nodes + their direct neighbors
+            keep_ids: set[str] = set()
+            local_ids = {n['id'] for n in nodes if n.get('is_local')}
+            keep_ids.update(local_ids)
+            for l in links:
+                if l['source'] in local_ids:
+                    keep_ids.add(l['target'])
+                if l['target'] in local_ids:
+                    keep_ids.add(l['source'])
+
+            # Fill remaining slots by importance
+            remaining = max_nodes - len(keep_ids)
+            if remaining > 0:
+                scored = sorted(
+                    (n for n in nodes if n['id'] not in keep_ids and n['connections'] > 0),
+                    key=lambda n: n['connections'] * (1 + n.get('confidence', 0)),
+                    reverse=True,
+                )
+                for n in scored[:remaining]:
+                    keep_ids.add(n['id'])
+
+            nodes = [n for n in nodes if n['id'] in keep_ids]
+            links = [l for l in links if l['source'] in keep_ids and l['target'] in keep_ids]
+
+            # Recount after filtering
+            for n in nodes:
+                n['connections'] = sum(1 for l in links if l['source'] == n['id'] or l['target'] == n['id'])
+
+        return {
+            'nodes': nodes,
+            'links': links,
+            'total_nodes': total_nodes,
+            'total_links': total_links,
+        }
 
     # ── Flood advertisement ────────────────────────────────────
 
