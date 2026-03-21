@@ -954,10 +954,11 @@ class MeshtasticTool:
                 }
             self.traceroute_completed = True
 
-        # Update in-memory cache
+        # Update in-memory cache (limit scales with number of devices)
         with self.latest_packets_lock:
             self.latest_packets.append(packet_dict)
-            self.latest_packets = self.latest_packets[-self.max_packets_memory:]
+            effective_limit = self.max_packets_memory * max(1, len(self.backends))
+            self.latest_packets = self.latest_packets[-effective_limit:]
 
     # ── Connection ────────────────────────────────────────────
 
@@ -1211,6 +1212,24 @@ class MeshtasticTool:
             if b.is_connected:
                 b.send_message(destination_id, message)
                 return
+
+    def send_channel_message(self, channel_idx: int, message: str, device_id: str | None = None) -> None:
+        """Send a channel message via a MeshCore backend."""
+        for b in self.backends:
+            if b.backend_type == BackendType.MESHCORE and b.is_connected:
+                if device_id is None or b.device_id == device_id:
+                    b.send_channel_message(channel_idx, message)
+                    return
+        raise ConnectionError("No connected MeshCore device")
+
+    def get_channels(self, device_id: str | None = None) -> list[dict]:
+        """Get channels from a MeshCore backend."""
+        for b in self.backends:
+            if b.backend_type == BackendType.MESHCORE and b.is_connected:
+                if device_id is None or b.device_id == device_id:
+                    channels = b.get_channels()
+                    return [{'index': ch['index'], 'name': ch['name'], 'device_id': b.device_id} for ch in channels]
+        return []
 
     def send_traceroute(self, destination_id, hop_limit=10):
         """Route traceroute to the appropriate backend."""

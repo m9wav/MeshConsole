@@ -920,6 +920,42 @@
                             <div id="send-status" class="mt-3"></div>
                         </div>
                     </div>
+
+                    <!-- Channel Messaging -->
+                    <div class="row mt-3" id="channel-msg-section" style="display:none;">
+                        <div class="col-lg-8">
+                            <div class="card card-modern">
+                                <div class="card-header card-header-modern">
+                                    <h5 class="mb-0"><i class="bi bi-megaphone text-info"></i> Channel Message</h5>
+                                </div>
+                                <div class="card-body">
+                                    <form id="channel-message-form">
+                                        <div class="row mb-3">
+                                            <div class="col-md-6">
+                                                <label class="form-label">Channel</label>
+                                                <select class="form-select form-control-modern" id="channel-select">
+                                                    <option value="">Loading channels...</option>
+                                                </select>
+                                            </div>
+                                            <div class="col-md-6">
+                                                <label class="form-label">Device</label>
+                                                <select class="form-select form-control-modern" id="channel-device-select">
+                                                    <option value="">Loading...</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                        <div class="mb-3">
+                                            <label class="form-label">Message</label>
+                                            <textarea class="form-control form-control-modern" id="channel-message-text" rows="3" maxlength="200" placeholder="Message to channel..." required></textarea>
+                                        </div>
+                                        <button type="submit" class="btn btn-info btn-modern">
+                                            <i class="bi bi-megaphone"></i> Send to Channel
+                                        </button>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Traceroute Tab -->
@@ -1505,6 +1541,8 @@
                     const target = e.target.getAttribute('data-bs-target');
                     if (target === '#packets') {
                         startAutoRefresh();
+                    } else if (target === '#send') {
+                        loadChannels();
                     } else if (target === '#nodes') {
                         fetchNodes();
                     } else if (target === '#stats') {
@@ -2532,6 +2570,85 @@
                 });
             });
         }
+
+        // ── Channel messaging ─────────────────────────────
+        function loadChannels() {
+            const section = document.getElementById('channel-msg-section');
+            const chSelect = document.getElementById('channel-select');
+            const devSelect = document.getElementById('channel-device-select');
+
+            // Load devices
+            fetch('/meshcore/devices').then(r => r.json()).then(data => {
+                const devices = data.devices || [];
+                if (devices.length === 0) {
+                    if (section) section.style.display = 'none';
+                    return;
+                }
+                if (section) section.style.display = '';
+                devSelect.innerHTML = '';
+                devices.forEach(d => {
+                    const opt = document.createElement('option');
+                    opt.value = d.device_id;
+                    opt.textContent = d.device_name || d.device_id;
+                    devSelect.appendChild(opt);
+                });
+                // Load channels for first device
+                loadChannelsForDevice(devices[0].device_id);
+            }).catch(() => { if (section) section.style.display = 'none'; });
+        }
+
+        function loadChannelsForDevice(deviceId) {
+            const chSelect = document.getElementById('channel-select');
+            fetch(`/channels?device_id=${encodeURIComponent(deviceId)}`).then(r => r.json()).then(data => {
+                chSelect.innerHTML = '';
+                (data.channels || []).forEach(ch => {
+                    const opt = document.createElement('option');
+                    opt.value = ch.index;
+                    opt.textContent = ch.name || `Channel ${ch.index}`;
+                    chSelect.appendChild(opt);
+                });
+            }).catch(() => { chSelect.innerHTML = '<option>No channels</option>'; });
+        }
+
+        function sendChannelMessage(event) {
+            event.preventDefault();
+            requireAuth(() => {
+                const channel = document.getElementById('channel-select').value;
+                const message = document.getElementById('channel-message-text').value;
+                const deviceId = document.getElementById('channel-device-select').value;
+                if (!message) { showAlert('Enter a message', 'warning'); return; }
+
+                const btn = event.target.querySelector('button[type="submit"]');
+                const origHtml = btn.innerHTML;
+                btn.innerHTML = '<span class="loading-spinner"></span> Sending...';
+                btn.disabled = true;
+
+                fetch('/send-channel', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({channel: parseInt(channel), message, device_id: deviceId})
+                })
+                .then(r => { if (r.status === 401) { authState.authenticated = false; updateAuthUI(); throw new Error('Auth required'); } return r.json(); })
+                .then(data => {
+                    if (data.success) {
+                        showAlert('Channel message sent!', 'success');
+                        document.getElementById('channel-message-text').value = '';
+                    } else {
+                        showAlert(data.error || 'Failed', 'danger');
+                    }
+                })
+                .catch(err => showAlert(err.message, 'danger'))
+                .finally(() => { btn.innerHTML = origHtml; btn.disabled = false; });
+            });
+        }
+
+        // Wire up channel form + device change
+        document.addEventListener('DOMContentLoaded', function() {
+            const chForm = document.getElementById('channel-message-form');
+            if (chForm) chForm.addEventListener('submit', sendChannelMessage);
+            const devSel = document.getElementById('channel-device-select');
+            if (devSel) devSel.addEventListener('change', function() { loadChannelsForDevice(this.value); });
+        });
 
         function startTraceroute(event) {
             event.preventDefault();
