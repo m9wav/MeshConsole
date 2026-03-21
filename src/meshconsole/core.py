@@ -720,7 +720,7 @@ class MeshtasticTool:
                         db_handler=self.db_handler,
                         verbose=self.verbose,
                     )
-                    backend.on_packet_received(self._handle_backend_packet)
+                    backend.on_packet_received(self._make_packet_handler(backend))
                     self.backends.append(backend)
                 except ImportError:
                     if self.backend_mode == 'meshtastic':
@@ -795,7 +795,7 @@ class MeshtasticTool:
                         verbose=self.verbose,
                         device_id=did,
                     )
-                    backend.on_packet_received(self._handle_backend_packet)
+                    backend.on_packet_received(self._make_packet_handler(backend))
                     self.backends.append(backend)
                 except ImportError:
                     logger.warning("Meshtastic package unavailable, skipping device config.")
@@ -824,7 +824,7 @@ class MeshtasticTool:
                         verbose=self.verbose,
                         device_id=did,
                     )
-                    backend.on_packet_received(self._handle_backend_packet)
+                    backend.on_packet_received(self._make_packet_handler(backend))
                     self.backends.append(backend)
                 except ImportError:
                     logger.warning("MeshCore package unavailable, skipping device config.")
@@ -901,6 +901,13 @@ class MeshtasticTool:
         return merged
 
     # ── Packet callback ───────────────────────────────────────
+
+    def _make_packet_handler(self, backend):
+        """Create a packet handler bound to a specific backend's device_id."""
+        def handler(packet: UnifiedPacket):
+            packet.device_id = backend.device_id
+            self._handle_backend_packet(packet)
+        return handler
 
     def _handle_backend_packet(self, packet: UnifiedPacket):
         """Handle packets produced by the backend -- log to DB and cache."""
@@ -1041,7 +1048,7 @@ class MeshtasticTool:
                 pin=pin,
                 verbose=self.verbose,
             )
-            mc_backend.on_packet_received(self._handle_backend_packet)
+            mc_backend.on_packet_received(self._make_packet_handler(mc_backend))
             mc_backend.connect()
             self.backends.append(mc_backend)
             logger.info("MeshCore backend connected successfully.")
@@ -1073,7 +1080,7 @@ class MeshtasticTool:
                         db_handler=self.db_handler,
                         verbose=self.verbose,
                     )
-                    backend.on_packet_received(self._handle_backend_packet)
+                    backend.on_packet_received(self._make_packet_handler(backend))
                     backend.connect()
                     self.backends.append(backend)
                     if not self.connection_start_time:
@@ -1091,7 +1098,7 @@ class MeshtasticTool:
                         address=device.port,
                         verbose=self.verbose,
                     )
-                    mc_backend.on_packet_received(self._handle_backend_packet)
+                    mc_backend.on_packet_received(self._make_packet_handler(mc_backend))
                     mc_backend.connect()
                     self.backends.append(mc_backend)
                     logger.info(f"Auto-connected MeshCore on {device.port}")
@@ -1986,15 +1993,19 @@ class MeshtasticTool:
             n['connections'] = sum(1 for l in links if l['source'] == n['id'] or l['target'] == n['id'])
 
         # Add local node(s) — connected to their nearest repeaters
-        last_hop_counts: dict[str, int] = {}
+        # Build per-device last_hop_counts so devices on different frequencies
+        # don't get phantom cross-links
+        per_device_hops: dict[str, dict[str, int]] = {}
         with self.latest_packets_lock:
             for pkt in self.latest_packets:
                 if pkt.get('backend') == 'meshcore':
                     raw = pkt.get('raw_packet', {})
                     path = raw.get('path', '') if isinstance(raw, dict) else ''
-                    if path and len(path) >= 4:
+                    did = pkt.get('device_id', '')
+                    if path and len(path) >= 4 and did:
                         last_hash = path[-2:].lower()
-                        last_hop_counts[last_hash] = last_hop_counts.get(last_hash, 0) + 1
+                        per_device_hops.setdefault(did, {})
+                        per_device_hops[did][last_hash] = per_device_hops[did].get(last_hash, 0) + 1
 
         for backend in self.backends:
             if backend.backend_type == BackendType.MESHCORE:
@@ -2017,8 +2028,9 @@ class MeshtasticTool:
                                 n['name'] = local_name
                                 break
 
-                    # Connect to nearest repeaters (last hops in routes)
-                    top_neighbors = sorted(last_hop_counts.items(), key=lambda x: -x[1])[:5]
+                    # Connect to nearest repeaters — only from THIS device's packets
+                    device_hops = per_device_hops.get(backend.device_id, {})
+                    top_neighbors = sorted(device_hops.items(), key=lambda x: -x[1])[:5]
                     for neighbor_hash, count in top_neighbors:
                         rep_ids = _pick_representatives(hash_to_node_ids.get(neighbor_hash, []))
                         for nid in rep_ids:

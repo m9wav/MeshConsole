@@ -157,9 +157,10 @@ def create_app(orchestrator):
         port_filter = request.args.get('port_filter', '')
         node_filter = request.args.get('node_filter', '')
         backend_filter = request.args.get('backend', '')
+        device_filter = request.args.get('device_id', '')
         unique_locations = request.args.get('unique_locations', '') == '1'
 
-        if node_filter or port_filter or unique_locations or backend_filter:
+        if node_filter or port_filter or unique_locations or backend_filter or device_filter:
             effective_port_filter = 'POSITION_APP,NODEINFO_APP,NODEINFO' if unique_locations else (port_filter or None)
             db_limit = max_packets if unique_locations else (offset + limit)
             packets = orchestrator.db_handler.fetch_packets_filtered(
@@ -167,6 +168,7 @@ def create_app(orchestrator):
                 port_filter=effective_port_filter,
                 limit=db_limit,
                 backend=backend_filter or None,
+                device_id=device_filter or None,
             )
 
             if unique_locations:
