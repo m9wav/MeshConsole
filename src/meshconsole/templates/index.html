@@ -2038,13 +2038,19 @@
             const did = packet.device_id || '';
             if (!did) return '';
             const entries = appState.backendEntries || [];
-            if (!entries.length) return '';  // don't show until status loads
             const entry = entries.find(e => e.device_id === did);
-            if (!entry) return '';
-            // Short name: take first word or truncate at 12 chars
-            let name = entry.device_name || '';
+            // Get name from status cache, or extract from device_id
+            let name = '';
+            let fullName = did;
+            if (entry) {
+                fullName = entry.device_name || did;
+                name = fullName;
+            } else {
+                // Fallback: extract readable part from device_id like "meshtastic:!fa9dc488"
+                name = did.split(':').pop() || did;
+            }
             if (name.length > 14) name = name.split(/[\s@]/)[0] || name.slice(0, 12);
-            return `<span class="badge backend-badge ms-1" style="background:rgba(100,116,139,0.3);color:inherit;font-size:0.6rem;font-weight:normal;" title="${entry.device_name || did}"><i class="bi bi-router"></i> ${name}</span>`;
+            return `<span class="badge backend-badge ms-1" style="background:rgba(100,116,139,0.3);color:inherit;font-size:0.6rem;font-weight:normal;" title="${fullName}"><i class="bi bi-router"></i> ${name}</span>`;
         }
 
         function initializePacketMap(mapId, lat, lon) {
