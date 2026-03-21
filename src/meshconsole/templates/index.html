@@ -1590,7 +1590,14 @@
             const filterParam = appState.portFilter ? `&port_filter=${appState.portFilter}` : '';
             const nodeFilterParam = appState.nodeFilter ? `&node_filter=${encodeURIComponent(appState.nodeFilter.id)}` : '';
             const uniqueLocationsParam = appState.uniqueLocations ? '&unique_locations=1' : '';
-            const backendParam = appState.backendFilter ? `&backend=${appState.backendFilter}` : '';
+            let backendParam = '';
+            if (appState.backendFilter) {
+                if (appState.backendFilter.startsWith('device:')) {
+                    backendParam = `&device_id=${encodeURIComponent(appState.backendFilter.slice(7))}`;
+                } else {
+                    backendParam = `&backend=${appState.backendFilter}`;
+                }
+            }
             fetch(`/packets?limit=${appState.limit}&offset=${appState.offset}${filterParam}${nodeFilterParam}${uniqueLocationsParam}${backendParam}`)
                 .then(response => response.json())
                 .then(response => {
@@ -1705,7 +1712,7 @@
             const fromNameEscaped = fromName.replace(/'/g, "\\'").replace(/"/g, '&quot;');
             const toNameEscaped = toName.replace(/'/g, "\\'").replace(/"/g, '&quot;');
 
-            const backendBadge = getBackendBadge(packet);
+            const backendBadge = getBackendBadge(packet) + getDeviceBadge(packet);
 
             const rssiDisplay = formatSignalValue(packet.rssi, 'dBm');
             const snrDisplay = formatSignalValue(packet.snr, 'dB');
@@ -2025,6 +2032,19 @@
                 return '<span class="badge bg-primary backend-badge ms-2">Meshtastic</span>';
             }
             return '';
+        }
+
+        function getDeviceBadge(packet) {
+            const did = packet.device_id || '';
+            if (!did) return '';
+            const entries = appState.backendEntries || [];
+            if (!entries.length) return '';  // don't show until status loads
+            const entry = entries.find(e => e.device_id === did);
+            if (!entry) return '';
+            // Short name: take first word or truncate at 12 chars
+            let name = entry.device_name || '';
+            if (name.length > 14) name = name.split(/[\s@]/)[0] || name.slice(0, 12);
+            return `<span class="badge backend-badge ms-1" style="background:rgba(100,116,139,0.3);color:inherit;font-size:0.6rem;font-weight:normal;" title="${entry.device_name || did}"><i class="bi bi-router"></i> ${name}</span>`;
         }
 
         function initializePacketMap(mapId, lat, lon) {
@@ -2732,8 +2752,11 @@
         }
 
         function fetchStats() {
-            const backendParam = appState.backendFilter ? `?backend=${appState.backendFilter}` : '';
-            fetch(`/stats${backendParam}`)
+            let statsBackend = '';
+            if (appState.backendFilter && !appState.backendFilter.startsWith('device:')) {
+                statsBackend = `?backend=${appState.backendFilter}`;
+            }
+            fetch(`/stats${statsBackend}`)
                 .then(response => response.json())
                 .then(data => {
                     updateStatsDisplay(data);
@@ -2967,6 +2990,7 @@
         // v3.2.0: dynamically populate backend filter from status
         let _lastFilterOptions = '';
         function updateBackendFilterDropdown(entries) {
+            appState.backendEntries = entries;
             const select = document.getElementById('backend-filter');
             if (!select) return;
             // Build option set: type groups + individual devices if >1 of same type
@@ -2982,18 +3006,13 @@
             _lastFilterOptions = optionsKey;
             const currentValue = select.value;
             let html = '<option value="">All Backends</option>';
-            types.forEach(t => {
-                const label = t.charAt(0).toUpperCase() + t.slice(1);
-                html += `<option value="${t}">${label}</option>`;
-            });
-            // Add individual device entries if multiple of same type
+            // Show every device with Type: DeviceName
             entries.forEach(e => {
-                if (typeCounts[e.type] > 1 && e.device_id) {
-                    const label = e.device_name
-                        ? `${e.type}: ${e.device_name}`
-                        : `${e.type}: ${e.device_id}`;
-                    html += `<option value="${e.device_id}">${label}</option>`;
-                }
+                const typeName = (e.type || 'unknown').charAt(0).toUpperCase() + (e.type || '').slice(1);
+                const deviceName = e.device_name || e.device_id || e.type;
+                const label = `${typeName}: ${deviceName}`;
+                // Use device_id: prefix so we can distinguish backend vs device filter
+                html += `<option value="device:${e.device_id}">${label}</option>`;
             });
             select.innerHTML = html;
             select.value = currentValue; // preserve selection

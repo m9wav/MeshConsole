@@ -684,13 +684,15 @@ class MeshCoreBackend(MeshBackend):
             self._contacts[prefix] = update
 
         # Skip types that have dedicated event handlers to avoid duplicates.
-        # These are handled by CONTACT_MSG_RECV, CHANNEL_MSG_RECV,
-        # ADVERTISEMENT, ACK respectively.
-        handled_types = {"TXT_MSG", "TEXT_MSG", "GRP_TXT", "ADVERT", "ACK", "REQ", "RESPONSE"}
+        # CONTACT_MSG_RECV handles TXT_MSG, CHANNEL_MSG_RECV handles GRP_TXT,
+        # ADVERTISEMENT handles ADVERT, _on_ack handles ACK.
+        handled_types = {"TXT_MSG", "TEXT_MSG", "GRP_TXT", "ACK"}
         if payload_type in handled_types:
             return
 
-        # Emit packets for other types (REQ, RESPONSE, TRACE, PATH, CONTROL, etc.)
+        # Emit packets for other types (ADVERT, REQ, RESPONSE, TRACE, PATH, etc.)
+        # ADVERT is also handled by _on_advertisement but we emit here too
+        # so nodes that only advertise always have packet records.
         pkt_hash = payload.get("pkt_hash", "")
         if adv_key:
             from_prefix = adv_key[:12]
@@ -706,6 +708,7 @@ class MeshCoreBackend(MeshBackend):
                 from_name = self._device_name or "Local"
 
         port_map = {
+            "ADVERT": "NODEINFO",
             "REQ": "ROUTING",
             "RESPONSE": "ROUTING",
             "TRACE": "TRACEROUTE",

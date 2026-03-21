@@ -213,14 +213,15 @@ class DatabaseHandler:
             )
             return self.cursor.fetchall()
 
-    def fetch_packets_filtered(self, node_filter=None, port_filter=None, limit=1000, backend=None):
-        """Fetch packets from the database with optional node, port, and backend filters.
+    def fetch_packets_filtered(self, node_filter=None, port_filter=None, limit=1000, backend=None, device_id=None):
+        """Fetch packets from the database with optional filters.
 
         Args:
             node_filter: If specified, only return packets where from_id or to_id matches.
             port_filter: If specified, only return packets with matching port_name.
             limit: Maximum number of packets to return.
             backend: If specified, only return packets from this backend.
+            device_id: If specified, only return packets from this device.
 
         Returns:
             List of packet dictionaries.
@@ -234,7 +235,6 @@ class DatabaseHandler:
                 params.extend([node_filter, node_filter])
 
             if port_filter:
-                # Support comma-separated values for cross-backend matching
                 port_values = [p.strip() for p in port_filter.split(',')]
                 if len(port_values) == 1:
                     conditions.append('port_name = ?')
@@ -247,6 +247,10 @@ class DatabaseHandler:
             if backend:
                 conditions.append('backend = ?')
                 params.append(backend)
+
+            if device_id:
+                conditions.append('device_id = ?')
+                params.append(device_id)
 
             where_clause = ' AND '.join(conditions) if conditions else '1=1'
             params.append(limit)
