@@ -353,6 +353,35 @@ def create_app(orchestrator):
             logger.error(f"Error sending message via API: {e}")
             return jsonify({'success': False, 'error': str(e)}), 500
 
+    @app.route('/channels')
+    def get_channels():
+        """Return available MeshCore channels."""
+        try:
+            device_id = request.args.get('device_id', None)
+            channels = orchestrator.get_channels(device_id=device_id)
+            return jsonify({'channels': channels})
+        except Exception as e:
+            return jsonify({'channels': [], 'error': str(e)}), 500
+
+    @app.route('/send-channel', methods=['POST'])
+    @require_auth
+    def send_channel_message_api():
+        """Send a message to a MeshCore channel."""
+        try:
+            data = request.get_json()
+            channel_idx = data.get('channel')
+            message = data.get('message')
+            device_id = data.get('device_id')
+
+            if channel_idx is None or not message:
+                return jsonify({'success': False, 'error': 'Missing channel or message'}), 400
+
+            orchestrator.send_channel_message(int(channel_idx), message, device_id=device_id)
+            return jsonify({'success': True, 'message': 'Channel message sent'})
+        except Exception as e:
+            logger.error(f"Error sending channel message: {e}")
+            return jsonify({'success': False, 'error': str(e)}), 500
+
     @app.route('/traceroute', methods=['POST'])
     @require_auth
     def traceroute_api():

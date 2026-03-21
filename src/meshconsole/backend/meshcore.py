@@ -206,6 +206,31 @@ class MeshCoreBackend(MeshBackend):
         else:
             logger.info(f"Message delivered to {destination}: {message}")
 
+    def send_channel_message(self, channel_idx: int, message: str) -> None:
+        """Send a message to a MeshCore channel by index."""
+        if not self._meshcore or not self._loop:
+            raise ConnectionError("Not connected")
+
+        future = asyncio.run_coroutine_threadsafe(
+            self._meshcore.commands.send_chan_msg(channel_idx, message),
+            self._loop,
+        )
+        result = future.result(timeout=30)
+        if result is None:
+            logger.warning(f"Channel {channel_idx} message sent (no ACK)")
+        elif getattr(result, 'type', None) == EventType.ERROR:
+            logger.error(f"Failed to send to channel {channel_idx}: {getattr(result, 'payload', 'unknown')}")
+        else:
+            logger.info(f"Channel {channel_idx} message sent: {message}")
+
+    def get_channels(self) -> list[dict]:
+        """Return the channel list with index and name."""
+        result = []
+        for idx, ch in enumerate(self._channels):
+            name = ch.get('_resolved_name', '') or f'Channel {idx}'
+            result.append({'index': idx, 'name': name})
+        return result
+
     def send_traceroute(self, destination: str, hop_limit: int = 10) -> None:
         """Initiate path discovery to the destination."""
         prefix = destination.removeprefix("mc:")
