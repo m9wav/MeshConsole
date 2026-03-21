@@ -711,13 +711,11 @@ class MeshCoreBackend(MeshBackend):
         # Skip types that have dedicated event handlers to avoid duplicates.
         # CONTACT_MSG_RECV handles TXT_MSG, CHANNEL_MSG_RECV handles GRP_TXT,
         # ADVERTISEMENT handles ADVERT, _on_ack handles ACK.
-        handled_types = {"TXT_MSG", "TEXT_MSG", "GRP_TXT", "ACK"}
+        handled_types = {"TXT_MSG", "TEXT_MSG", "GRP_TXT", "ADVERT", "ACK"}
         if payload_type in handled_types:
             return
 
-        # Emit packets for other types (ADVERT, REQ, RESPONSE, TRACE, PATH, etc.)
-        # ADVERT is also handled by _on_advertisement but we emit here too
-        # so nodes that only advertise always have packet records.
+        # Emit packets for other types (REQ, RESPONSE, TRACE, PATH, etc.)
         pkt_hash = payload.get("pkt_hash", "")
         if adv_key:
             from_prefix = adv_key[:12]
