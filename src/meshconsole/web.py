@@ -348,6 +348,23 @@ def create_app(orchestrator):
                 return jsonify({'success': False, 'error': 'Missing destination or message'}), 400
 
             orchestrator.send_message(destination, message, device_id=device_id)
+            # Log sent message to DB for thread view
+            local_id = orchestrator.local_node_id or 'self'
+            if device_id:
+                for b in orchestrator.backends:
+                    if b.device_id == device_id and b.local_node_id:
+                        local_id = b.local_node_id
+                        break
+            backend_str = 'meshcore' if destination.startswith('mc:') else 'meshtastic'
+            orchestrator.db_handler.log_message(
+                timestamp=datetime.now().isoformat(),
+                from_id=local_id,
+                to_id=destination,
+                port_name='TEXT_MESSAGE',
+                message=message,
+                backend=backend_str,
+                device_id=device_id or '',
+            )
             return jsonify({'success': True, 'message': 'Message sent successfully'})
         except Exception as e:
             logger.error(f"Error sending message via API: {e}")
@@ -428,6 +445,23 @@ def create_app(orchestrator):
             if not message:
                 return jsonify({'success': False, 'error': 'Empty message'}), 400
             orchestrator.send_message(node_id, message, device_id=device_id)
+            # Log sent message to DB so it appears in the thread
+            local_id = orchestrator.local_node_id or 'self'
+            if device_id:
+                for b in orchestrator.backends:
+                    if b.device_id == device_id and b.local_node_id:
+                        local_id = b.local_node_id
+                        break
+            backend_str = 'meshcore' if node_id.startswith('mc:') else 'meshtastic'
+            orchestrator.db_handler.log_message(
+                timestamp=datetime.now().isoformat(),
+                from_id=local_id,
+                to_id=node_id,
+                port_name='TEXT_MESSAGE',
+                message=message,
+                backend=backend_str,
+                device_id=device_id or '',
+            )
             return jsonify({'success': True})
         except Exception as e:
             logger.error(f"Error sending thread reply: {e}")
