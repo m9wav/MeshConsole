@@ -1439,9 +1439,11 @@
             // Setup character counter
             const messageText = document.getElementById('message-text');
             const charCount = document.getElementById('char-count');
-            messageText.addEventListener('input', function() {
-                charCount.textContent = this.value.length;
-            });
+            if (messageText && charCount) {
+                messageText.addEventListener('input', function() {
+                    charCount.textContent = this.value.length;
+                });
+            }
         }
 
         function setupEventListeners() {
@@ -1531,7 +1533,8 @@
             document.getElementById('auto-refresh-toggle').addEventListener('click', toggleAutoRefresh);
 
             // Form submissions
-            document.getElementById('send-message-form').addEventListener('submit', sendMessage);
+            const sendForm = document.getElementById('send-message-form');
+            if (sendForm) sendForm.addEventListener('submit', sendMessage);
             document.getElementById('traceroute-form').addEventListener('submit', startTraceroute);
 
             // Settings
@@ -1624,7 +1627,7 @@
         function loadInitialData() {
             checkAuthStatus().then(() => {
                 // Fetch status first so device names are available for RX badges
-                updateUptime().then(() => {
+                updateUptime().catch(() => {}).then(() => {
                     fetchPackets();
                     fetchNodes();
                     fetchStats();
@@ -2444,6 +2447,7 @@
             const input = document.getElementById(inputId);
             const hidden = document.getElementById(hiddenId);
             const dropdown = document.getElementById(dropdownId);
+            if (!input || !dropdown) return;  // Element not in DOM
             let activeIndex = -1;
 
             function getBackendBadgeHtml(backend) {
