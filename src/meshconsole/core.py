@@ -679,6 +679,9 @@ class MeshtasticTool:
         # Load database config
         self.max_packets_memory = self.config.getint('Database', 'max_packets_memory', fallback=1000)
 
+        # Privacy config
+        self.hide_dm_from_feed = self.config.getboolean('Privacy', 'hide_dm_from_feed', fallback=False)
+
         # Shared state
         self.latest_packets = []
         self.latest_packets_lock = threading.Lock()
@@ -955,10 +958,26 @@ class MeshtasticTool:
             self.traceroute_completed = True
 
         # Update in-memory cache (limit scales with number of devices)
-        with self.latest_packets_lock:
-            self.latest_packets.append(packet_dict)
-            effective_limit = self.max_packets_memory * max(1, len(self.backends))
-            self.latest_packets = self.latest_packets[-effective_limit:]
+        # Optionally hide DMs from the live feed
+        is_dm = (
+            packet.port_name in ('TEXT_MESSAGE', 'TEXT_MESSAGE_APP')
+            and packet.to_id
+            and packet.to_id not in ('^all', 'broadcast', 'all')
+            and not packet.to_id.startswith('channel:')
+        )
+        if not (is_dm and self.hide_dm_from_feed):
+            with self.latest_packets_lock:
+                self.latest_packets.append(packet_dict)
+                effective_limit = self.max_packets_memory * max(1, len(self.backends))
+                self.latest_packets = self.latest_packets[-effective_limit:]
+
+    def get_local_node_ids(self) -> list[str]:
+        """Return all local node IDs across all backends."""
+        ids = []
+        for b in self.backends:
+            if b.local_node_id:
+                ids.append(b.local_node_id)
+        return ids
 
     # ── Connection ────────────────────────────────────────────
 

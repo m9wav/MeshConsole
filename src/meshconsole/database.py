@@ -80,6 +80,10 @@ class DatabaseHandler:
                 'ON route_adjacency(node_hash, neighbor_hash)'
             )
 
+            # Message indexes for conversation queries (v3.8.0)
+            self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(from_id, to_id, timestamp DESC)')
+            self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_messages_ts ON messages(timestamp DESC)')
+
             self.conn.commit()
             logger.info("Database initialized.")
         except sqlite3.Error as e:
@@ -503,6 +507,88 @@ class DatabaseHandler:
                 return self.cursor.fetchall()
             except sqlite3.Error as e:
                 logger.error(f"Failed to load route adjacency: {e}")
+                return []
+
+    # ── Conversation queries (v3.8.0) ────────────────────────
+
+    def fetch_conversations(self, local_node_ids: list[str] | None = None):
+        """Return unique conversation threads with last message.
+
+        A conversation is any exchange between a local node and another
+        node.  Groups by the OTHER node, sorted by most recent message.
+        """
+        if not local_node_ids:
+            return []
+
+        with self.lock:
+            try:
+                placeholders = ','.join('?' * len(local_node_ids))
+                # Find all messages involving our nodes as DMs (not broadcasts)
+                self.cursor.execute(f'''
+                    SELECT
+                        CASE WHEN from_id IN ({placeholders}) THEN to_id ELSE from_id END AS other_id,
+                        message,
+                        timestamp,
+                        backend,
+                        MAX(timestamp) AS last_ts
+                    FROM messages
+                    WHERE (from_id IN ({placeholders}) OR to_id IN ({placeholders}))
+                      AND to_id NOT IN ('^all', 'broadcast', 'all')
+                      AND to_id NOT LIKE 'channel:%'
+                    GROUP BY other_id
+                    ORDER BY last_ts DESC
+                ''', local_node_ids * 3)
+
+                rows = self.cursor.fetchall()
+                conversations = []
+                for row in rows:
+                    other_id = row[0]
+                    # Skip if other_id is one of our own nodes
+                    if other_id in local_node_ids:
+                        continue
+                    conversations.append({
+                        'node_id': other_id,
+                        'last_message': row[1] or '',
+                        'timestamp': row[2] or '',
+                        'backend': row[3] or '',
+                    })
+                return conversations
+            except sqlite3.Error as e:
+                logger.error(f"Error fetching conversations: {e}")
+                return []
+
+    def fetch_thread(self, node_id: str, local_node_ids: list[str] | None = None, limit: int = 50):
+        """Return messages between us and a specific node, newest first."""
+        if not local_node_ids:
+            return []
+
+        with self.lock:
+            try:
+                placeholders = ','.join('?' * len(local_node_ids))
+                self.cursor.execute(f'''
+                    SELECT timestamp, from_id, to_id, message, backend, device_id
+                    FROM messages
+                    WHERE ((from_id IN ({placeholders}) AND to_id = ?)
+                        OR (from_id = ? AND to_id IN ({placeholders})))
+                    ORDER BY timestamp DESC
+                    LIMIT ?
+                ''', [*local_node_ids, node_id, node_id, *local_node_ids, limit])
+
+                rows = self.cursor.fetchall()
+                messages = []
+                for row in rows:
+                    messages.append({
+                        'timestamp': row[0],
+                        'from_id': row[1],
+                        'to_id': row[2],
+                        'message': row[3],
+                        'backend': row[4] if len(row) > 4 else '',
+                        'device_id': row[5] if len(row) > 5 else '',
+                        'is_self': row[1] in local_node_ids,
+                    })
+                return list(reversed(messages))  # chronological order
+            except sqlite3.Error as e:
+                logger.error(f"Error fetching thread: {e}")
                 return []
 
     def close(self):

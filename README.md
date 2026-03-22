@@ -7,13 +7,15 @@
 </p>
 
 <p align="center">
-  <a href="https://pypi.org/project/meshconsole/"><img src="https://img.shields.io/pypi/v/meshconsole?v=3.7.8" alt="PyPI"></a>
+  <a href="https://pypi.org/project/meshconsole/"><img src="https://img.shields.io/pypi/v/meshconsole?v=3.8.0" alt="PyPI"></a>
   <a href="https://m9wav.uk/">m9wav.uk</a>
 </p>
 
 ---
 
 ## What's New
+
+**v3.8.0** -- Private messaging: threaded conversation view with chat-style bubbles, per-device source selection, configurable DM privacy from feed
 
 **v3.7.0** -- Mesh Map: live geographic network map with dark basemap, zoom-progressive node loading, high-volume trunk visualization, smart distance filtering
 
