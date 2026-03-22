@@ -964,6 +964,12 @@
                                 </div>
                                 <div class="card-body">
                                     <form id="traceroute-form">
+                                        <div class="mb-3">
+                                            <label class="form-label">Traceroute From</label>
+                                            <select class="form-select form-control-modern" id="traceroute-source-device">
+                                                <option value="">Auto (any device)</option>
+                                            </select>
+                                        </div>
                                         <div class="row">
                                             <div class="col-md-8">
                                                 <label for="traceroute-destination" class="form-label">Destination Node</label>
@@ -1575,8 +1581,8 @@
             });
 
             // Initialize autocomplete for destination selectors
-            initAutocomplete('destination-node', 'destination-node-value', 'destination-autocomplete');
-            initAutocomplete('traceroute-destination', 'traceroute-destination-value', 'traceroute-autocomplete');
+            initAutocomplete('destination-node', 'destination-node-value', 'destination-autocomplete', 'send-source-device');
+            initAutocomplete('traceroute-destination', 'traceroute-destination-value', 'traceroute-autocomplete', 'traceroute-source-device');
         }
 
         function loadInitialData() {
@@ -2379,23 +2385,26 @@
         }
 
         // ── Autocomplete system ─────────────────────────────────
-        function getFilteredNodes() {
-            const all = appState.sortedNodes || [];
-            const srcSelect = document.getElementById('send-source-device');
+        function getFilteredNodes(sourceSelectId) {
+            const all = (appState.sortedNodes || []).filter(n => {
+                // Exclude non-node IDs
+                const nid = n.id || '';
+                if (nid.startsWith('channel:') || nid === 'broadcast' || nid === 'self' || nid === 'channel') return false;
+                return true;
+            });
+            const srcSelect = document.getElementById(sourceSelectId || 'send-source-device');
             if (!srcSelect || !srcSelect.value) return all;
-            // Determine backend type from device_id
             const did = srcSelect.value;
             const entry = (appState.backendEntries || []).find(e => e.device_id === did);
             if (!entry) return all;
-            const backendType = entry.type; // 'meshtastic' or 'meshcore'
+            const backendType = entry.type;
             return all.filter(n => {
-                if (backendType === 'meshcore') return n.id && n.id.startsWith('mc:');
-                if (backendType === 'meshtastic') return n.id && !n.id.startsWith('mc:');
-                return true;
+                const nb = n.backend || (n.id && n.id.startsWith('mc:') ? 'meshcore' : 'meshtastic');
+                return nb === backendType;
             });
         }
 
-        function initAutocomplete(inputId, hiddenId, dropdownId) {
+        function initAutocomplete(inputId, hiddenId, dropdownId, sourceDeviceSelectId) {
             const input = document.getElementById(inputId);
             const hidden = document.getElementById(hiddenId);
             const dropdown = document.getElementById(dropdownId);
@@ -2444,7 +2453,7 @@
 
             function filterAndShow() {
                 const term = input.value.toLowerCase().trim();
-                const nodes = getFilteredNodes();
+                const nodes = getFilteredNodes(sourceDeviceSelectId);
                 if (!term) {
                     showDropdown(nodes);
                     return;
@@ -2585,35 +2594,40 @@
             });
         }
 
-        // When source device changes, clear destination and reload channels
+        // When source device changes, clear destination
         document.addEventListener('DOMContentLoaded', function() {
-            const srcSel = document.getElementById('send-source-device');
-            if (srcSel) {
-                srcSel.addEventListener('change', function() {
-                    // Clear destination since it may not be valid for new device type
-                    const destInput = document.getElementById('destination-node');
-                    const destHidden = document.getElementById('destination-node-value');
-                    if (destInput) { destInput.value = ''; destInput.dataset.selectedId = ''; }
-                    if (destHidden) destHidden.value = '';
-                });
-            }
+            [['send-source-device', 'destination-node', 'destination-node-value'],
+             ['traceroute-source-device', 'traceroute-destination', 'traceroute-destination-value']
+            ].forEach(([srcId, destId, hiddenId]) => {
+                const srcSel = document.getElementById(srcId);
+                if (srcSel) {
+                    srcSel.addEventListener('change', function() {
+                        const destInput = document.getElementById(destId);
+                        const destHidden = document.getElementById(hiddenId);
+                        if (destInput) { destInput.value = ''; destInput.dataset.selectedId = ''; }
+                        if (destHidden) destHidden.value = '';
+                    });
+                }
+            });
         });
 
         function populateSourceDevices() {
-            const select = document.getElementById('send-source-device');
-            if (!select) return;
             const entries = appState.backendEntries || [];
             if (!entries.length) return;
-            const current = select.value;
-            let html = '<option value="">Auto (any device)</option>';
-            entries.forEach(e => {
-                if (!e.connected) return;
-                const typeName = (e.type || '').charAt(0).toUpperCase() + (e.type || '').slice(1);
-                const name = e.device_name || e.device_id;
-                html += `<option value="${e.device_id}">${typeName}: ${name}</option>`;
+            const connected = entries.filter(e => e.connected);
+            ['send-source-device', 'traceroute-source-device'].forEach(selId => {
+                const select = document.getElementById(selId);
+                if (!select) return;
+                const current = select.value;
+                let html = '<option value="">Auto (any device)</option>';
+                connected.forEach(e => {
+                    const typeName = (e.type || '').charAt(0).toUpperCase() + (e.type || '').slice(1);
+                    const name = e.device_name || e.device_id;
+                    html += `<option value="${e.device_id}">${typeName}: ${name}</option>`;
+                });
+                select.innerHTML = html;
+                select.value = current;
             });
-            select.innerHTML = html;
-            select.value = current;
         }
 
         // ── Channel messaging ─────────────────────────────
