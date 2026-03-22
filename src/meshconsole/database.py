@@ -248,11 +248,14 @@ class DatabaseHandler:
                     conditions.append(f'port_name IN ({placeholders})')
                     params.extend(port_values)
 
-            if backend:
+            if backend and device_id:
+                # Match by device_id OR by backend (for old packets without device_id)
+                conditions.append('(device_id = ? OR (device_id = "" AND backend = ?))')
+                params.extend([device_id, backend])
+            elif backend:
                 conditions.append('backend = ?')
                 params.append(backend)
-
-            if device_id:
+            elif device_id:
                 conditions.append('device_id = ?')
                 params.append(device_id)
 
