@@ -2379,6 +2379,22 @@
         }
 
         // ── Autocomplete system ─────────────────────────────────
+        function getFilteredNodes() {
+            const all = appState.sortedNodes || [];
+            const srcSelect = document.getElementById('send-source-device');
+            if (!srcSelect || !srcSelect.value) return all;
+            // Determine backend type from device_id
+            const did = srcSelect.value;
+            const entry = (appState.backendEntries || []).find(e => e.device_id === did);
+            if (!entry) return all;
+            const backendType = entry.type; // 'meshtastic' or 'meshcore'
+            return all.filter(n => {
+                if (backendType === 'meshcore') return n.id && n.id.startsWith('mc:');
+                if (backendType === 'meshtastic') return n.id && !n.id.startsWith('mc:');
+                return true;
+            });
+        }
+
         function initAutocomplete(inputId, hiddenId, dropdownId) {
             const input = document.getElementById(inputId);
             const hidden = document.getElementById(hiddenId);
@@ -2428,12 +2444,12 @@
 
             function filterAndShow() {
                 const term = input.value.toLowerCase().trim();
+                const nodes = getFilteredNodes();
                 if (!term) {
-                    // Show all nodes (top 10)
-                    showDropdown(appState.sortedNodes || []);
+                    showDropdown(nodes);
                     return;
                 }
-                const filtered = (appState.sortedNodes || []).filter(node =>
+                const filtered = nodes.filter(node =>
                     (node.name && node.name.toLowerCase().includes(term)) ||
                     (node.id && node.id.toLowerCase().includes(term)) ||
                     (node.shortName && node.shortName.toLowerCase().includes(term))
@@ -2568,6 +2584,20 @@
                 });
             });
         }
+
+        // When source device changes, clear destination and reload channels
+        document.addEventListener('DOMContentLoaded', function() {
+            const srcSel = document.getElementById('send-source-device');
+            if (srcSel) {
+                srcSel.addEventListener('change', function() {
+                    // Clear destination since it may not be valid for new device type
+                    const destInput = document.getElementById('destination-node');
+                    const destHidden = document.getElementById('destination-node-value');
+                    if (destInput) { destInput.value = ''; destInput.dataset.selectedId = ''; }
+                    if (destHidden) destHidden.value = '';
+                });
+            }
+        });
 
         function populateSourceDevices() {
             const select = document.getElementById('send-source-device');
