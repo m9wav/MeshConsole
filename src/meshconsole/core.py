@@ -1214,18 +1214,18 @@ class MeshtasticTool:
                 return
 
     def send_channel_message(self, channel_idx: int, message: str, device_id: str | None = None) -> None:
-        """Send a channel message via a MeshCore backend."""
+        """Send a channel message via any backend that supports it."""
         for b in self.backends:
-            if b.backend_type == BackendType.MESHCORE and b.is_connected:
+            if b.is_connected and hasattr(b, 'send_channel_message'):
                 if device_id is None or b.device_id == device_id:
                     b.send_channel_message(channel_idx, message)
                     return
-        raise ConnectionError("No connected MeshCore device")
+        raise ConnectionError("No connected device with channel support")
 
     def get_channels(self, device_id: str | None = None) -> list[dict]:
-        """Get channels from a MeshCore backend."""
+        """Get channels from a specific device."""
         for b in self.backends:
-            if b.backend_type == BackendType.MESHCORE and b.is_connected:
+            if b.is_connected and hasattr(b, 'get_channels'):
                 if device_id is None or b.device_id == device_id:
                     channels = b.get_channels()
                     return [{'index': ch['index'], 'name': ch['name'], 'device_id': b.device_id} for ch in channels]

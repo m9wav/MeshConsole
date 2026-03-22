@@ -407,19 +407,10 @@ def create_app(orchestrator):
             results = orchestrator.get_traceroute_results()
             if results:
                 return jsonify(results)
-            elif is_meshcore:
-                # MeshCore: no PATH_RESPONSE likely means direct connection
-                return jsonify({
-                    'success': True,
-                    'destination': destination,
-                    'route': [{'node': destination, 'snr': None}],
-                    'message': 'Direct connection (no intermediate hops detected)',
-                    'backend': 'meshcore',
-                })
             else:
                 return jsonify({
                     'success': False,
-                    'error': 'Traceroute timed out or no response received',
+                    'error': 'Traceroute timed out — node may be unreachable or out of range',
                     'timeout': True
                 })
         except Exception as e:
