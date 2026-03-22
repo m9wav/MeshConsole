@@ -920,12 +920,6 @@
                                 </div>
                                 <div class="card-body">
                                     <p class="text-muted mb-3">Send a message to a public or private channel. For direct messages, use the <strong>Messages</strong> tab.</p>
-                        <div class="col-lg-8">
-                            <div class="card card-modern">
-                                <div class="card-header card-header-modern">
-                                    <h5 class="mb-0"><i class="bi bi-megaphone text-info"></i> Channel Message</h5>
-                                </div>
-                                <div class="card-body">
                                     <form id="channel-message-form">
                                         <div class="row mb-3">
                                             <div class="col-md-6">
@@ -1630,14 +1624,13 @@
 
         function loadInitialData() {
             checkAuthStatus().then(() => {
-                // Fetch status first so device names are available for RX badges
-                updateUptime().catch(() => {}).then(() => {
-                    fetchPackets();
-                    fetchNodes();
-                    fetchStats();
-                    updateSystemInfo();
-                    loadChannels();
-                });
+                updateUptime();
+                fetchPackets();
+                fetchNodes();
+                fetchStats();
+                updateSystemInfo();
+                loadChannels();
+                startAutoRefresh();
                 setInterval(updateUptime, 60000);
             });
         }
@@ -4433,11 +4426,50 @@
         });
 
         function newMessagePrompt() {
-            const nodes = appState.sortedNodes || [];
-            const nodeId = prompt('Enter node ID to message (e.g. mc:a1b2c3d4e5f6 or !abc12345):');
-            if (nodeId && nodeId.trim()) {
-                openThread(nodeId.trim());
-            }
+            const container = document.getElementById('conv-messages');
+            const header = document.getElementById('conv-header');
+            const input = document.getElementById('conv-input');
+            if (header) header.style.display = '';
+            if (input) input.style.display = 'none';
+            document.getElementById('conv-name').textContent = 'New Message';
+            document.getElementById('messages-container')?.classList.add('thread-open');
+
+            const nodes = (appState.sortedNodes || []).filter(n => {
+                const nid = n.id || '';
+                return nid !== 'broadcast' && nid !== 'self' && !nid.startsWith('channel:');
+            });
+
+            let html = '<div style="padding:1rem;">';
+            html += '<input type="text" id="new-msg-search" class="form-control form-control-modern mb-2" placeholder="Search nodes..." style="border-radius:20px;" autofocus>';
+            html += '<div id="new-msg-list" style="max-height:calc(100vh - 300px);overflow-y:auto;">';
+            nodes.slice(0, 50).forEach(n => {
+                const badge = n.backend === 'meshcore' ? '<span class="badge bg-warning text-dark" style="font-size:0.65rem;">MC</span>' : '<span class="badge bg-primary" style="font-size:0.65rem;">MT</span>';
+                html += `<div class="thread-item" onclick="openThread('${n.id}')" style="cursor:pointer;">
+                    <div class="thread-info"><div class="thread-name">${n.name} ${badge}</div><div class="thread-preview">${n.id}</div></div>
+                </div>`;
+            });
+            html += '</div></div>';
+            container.innerHTML = html;
+
+            // Wire up search
+            setTimeout(() => {
+                const search = document.getElementById('new-msg-search');
+                if (search) {
+                    search.focus();
+                    search.addEventListener('input', function() {
+                        const term = this.value.toLowerCase();
+                        const filtered = nodes.filter(n => (n.name||'').toLowerCase().includes(term) || (n.id||'').toLowerCase().includes(term));
+                        const list = document.getElementById('new-msg-list');
+                        if (!list) return;
+                        list.innerHTML = filtered.slice(0, 30).map(n => {
+                            const badge = n.backend === 'meshcore' ? '<span class="badge bg-warning text-dark" style="font-size:0.65rem;">MC</span>' : '<span class="badge bg-primary" style="font-size:0.65rem;">MT</span>';
+                            return `<div class="thread-item" onclick="openThread('${n.id}')" style="cursor:pointer;">
+                                <div class="thread-info"><div class="thread-name">${n.name} ${badge}</div><div class="thread-preview">${n.id}</div></div>
+                            </div>`;
+                        }).join('');
+                    });
+                }
+            }, 100);
         }
 
         // Stop polling when leaving Messages tab
