@@ -382,6 +382,57 @@ def create_app(orchestrator):
             logger.error(f"Error sending channel message: {e}")
             return jsonify({'success': False, 'error': str(e)}), 500
 
+    # ── Conversations / Private Messaging ────────────────────
+
+    @app.route('/conversations')
+    @require_auth
+    def get_conversations():
+        """Return list of conversation threads."""
+        try:
+            local_ids = orchestrator.get_local_node_ids()
+            conversations = orchestrator.db_handler.fetch_conversations(local_ids)
+            # Resolve node names
+            for conv in conversations:
+                conv['node_name'] = orchestrator.resolve_node_name(conv['node_id'])
+            return jsonify({'conversations': conversations})
+        except Exception as e:
+            logger.error(f"Error fetching conversations: {e}")
+            return jsonify({'conversations': [], 'error': str(e)}), 500
+
+    @app.route('/conversations/<path:node_id>')
+    @require_auth
+    def get_thread(node_id):
+        """Return messages for a conversation thread."""
+        try:
+            local_ids = orchestrator.get_local_node_ids()
+            limit = int(request.args.get('limit', 50))
+            messages = orchestrator.db_handler.fetch_thread(node_id, local_ids, limit)
+            # Resolve names
+            for msg in messages:
+                msg['from_name'] = orchestrator.resolve_node_name(msg['from_id'])
+                msg['to_name'] = orchestrator.resolve_node_name(msg['to_id'])
+            return jsonify({'messages': messages, 'node_id': node_id,
+                            'node_name': orchestrator.resolve_node_name(node_id)})
+        except Exception as e:
+            logger.error(f"Error fetching thread: {e}")
+            return jsonify({'messages': [], 'error': str(e)}), 500
+
+    @app.route('/conversations/<path:node_id>/send', methods=['POST'])
+    @require_auth
+    def send_thread_reply(node_id):
+        """Send a reply in a conversation thread."""
+        try:
+            data = request.get_json()
+            message = data.get('message', '')
+            device_id = data.get('device_id')
+            if not message:
+                return jsonify({'success': False, 'error': 'Empty message'}), 400
+            orchestrator.send_message(node_id, message, device_id=device_id)
+            return jsonify({'success': True})
+        except Exception as e:
+            logger.error(f"Error sending thread reply: {e}")
+            return jsonify({'success': False, 'error': str(e)}), 500
+
     @app.route('/traceroute', methods=['POST'])
     @require_auth
     def traceroute_api():
