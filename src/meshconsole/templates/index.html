@@ -793,14 +793,14 @@
                         <i class="bi bi-inbox"></i> Live Packets
                     </button>
                 </li>
-                <li class="nav-item" role="presentation" id="send-tab-item" style="display:none;">
-                    <button class="nav-link" id="send-tab" data-bs-toggle="tab" data-bs-target="#send" type="button" role="tab">
-                        <i class="bi bi-megaphone"></i> Channels
-                    </button>
-                </li>
                 <li class="nav-item" role="presentation" id="messages-tab-item" style="display:none;">
                     <button class="nav-link" id="messages-tab" data-bs-toggle="tab" data-bs-target="#messages" type="button" role="tab">
                         <i class="bi bi-chat-dots"></i> Messages
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation" id="send-tab-item" style="display:none;">
+                    <button class="nav-link" id="send-tab" data-bs-toggle="tab" data-bs-target="#send" type="button" role="tab">
+                        <i class="bi bi-megaphone"></i> Channels
                     </button>
                 </li>
                 <li class="nav-item" role="presentation" id="flood-tab-item" style="display: none;">
@@ -953,9 +953,14 @@
                 <div class="tab-pane fade" id="messages" role="tabpanel">
                     <div class="messages-container" id="messages-container">
                         <div class="thread-list" id="thread-list">
-                            <div style="padding:0.8rem 1rem;border-bottom:1px solid var(--border-color);display:flex;gap:0.5rem;">
-                                <input type="text" class="form-control form-control-modern" id="thread-search" placeholder="Search..." style="border-radius:20px;font-size:0.85rem;flex:1;">
-                                <button class="btn btn-primary-modern btn-sm" onclick="newMessagePrompt()" title="New Message" style="border-radius:50%;width:34px;height:34px;padding:0;"><i class="bi bi-pencil-square"></i></button>
+                            <div style="padding:0.6rem 0.8rem;border-bottom:1px solid var(--border-color);">
+                                <select class="form-select form-control-modern mb-2" id="msg-device-select" style="font-size:0.8rem;">
+                                    <option value="">All Devices</option>
+                                </select>
+                                <div style="display:flex;gap:0.5rem;">
+                                    <input type="text" class="form-control form-control-modern" id="thread-search" placeholder="Search..." style="border-radius:20px;font-size:0.85rem;flex:1;">
+                                    <button class="btn btn-primary-modern btn-sm" onclick="newMessagePrompt()" title="New Message" style="border-radius:50%;width:34px;height:34px;padding:0;"><i class="bi bi-pencil-square"></i></button>
+                                </div>
                             </div>
                             <div id="thread-items" style="padding:0;">
                                 <div class="conversation-empty">No conversations yet</div>
@@ -1626,8 +1631,8 @@
             checkAuthStatus().then(() => {
                 updateUptime();
                 fetchPackets();
-                fetchNodes();
-                fetchStats();
+                // Load node list for autocomplete but don't render cards yet
+                fetchNodeList();
                 updateSystemInfo();
                 loadChannels();
                 startAutoRefresh();
@@ -2190,22 +2195,30 @@
             }, 300);
         }
 
-        function fetchNodes() {
-            // Fetch node info, packet activity, and graph pubkeys in parallel
-            Promise.all([
-                fetch('/nodes').then(r => r.json()),
-                fetch('/packets?limit=500&offset=0').then(r => r.json()),
-                fetch('/mesh-graph').then(r => r.json()).catch(() => ({nodes: []}))
-            ]).then(([nodesResponse, packetsResponse, graphResponse]) => {
-                // Build set of node IDs that exist in the mesh graph
-                const graphNodeIds = new Set();
-                (graphResponse.nodes || []).forEach(gn => {
-                    graphNodeIds.add(gn.id.toLowerCase());
-                });
-                appState.meshGraphNodeIds = graphNodeIds;
+        function fetchNodeList() {
+            // Lightweight: just populate appState.sortedNodes for autocomplete
+            fetch('/nodes').then(r => r.json()).then(data => {
                 const nodes = {};
+                (data.nodes || []).forEach(node => {
+                    nodes[node.id] = {
+                        id: node.id,
+                        name: node.longName || node.id,
+                        shortName: node.shortName || '',
+                        lastSeen: node.lastSeen,
+                        backend: node.backend || (node.id.startsWith('mc:') ? 'meshcore' : 'meshtastic'),
+                    };
+                });
+                appState.nodes = nodes;
+                appState.sortedNodes = Object.values(nodes).sort((a, b) => {
+                    const da = new Date(a.lastSeen || 0), db = new Date(b.lastSeen || 0);
+                    return (isNaN(db) ? 0 : db) - (isNaN(da) ? 0 : da);
+                });
+            }).catch(() => {});
+        }
 
-                // First, populate from /nodes endpoint (has all NODEINFO data including shortNames)
+        function fetchNodes() {
+            fetch('/nodes').then(r => r.json()).then(nodesResponse => {
+                const nodes = {};
                 (nodesResponse.nodes || []).forEach(node => {
                     nodes[node.id] = {
                         id: node.id,
@@ -2216,37 +2229,6 @@
                         backend: node.backend || (node.id.startsWith('mc:') ? 'meshcore' : 'meshtastic'),
                     };
                 });
-
-                // Then update lastSeen from recent packets (more accurate activity times)
-                const packets = packetsResponse.packets || packetsResponse;
-                packets.forEach(packet => {
-                    if (!packet.from_id) return;
-
-                    // Skip invalid node IDs
-                    if (['channel', 'broadcast', 'self', 'mc:mesh'].includes(packet.from_id)) return;
-                    if (packet.from_id.startsWith('mc:')) {
-                        const suffix = packet.from_id.slice(3);
-                        if (/^\d+$/.test(suffix) || suffix === 'unknown') return;
-                        if (appState.localNodeId && packet.from_id === appState.localNodeId) return;
-                    }
-
-                    if (nodes[packet.from_id]) {
-                        // Update lastSeen if packet is more recent
-                        if (new Date(packet.timestamp) > new Date(nodes[packet.from_id].lastSeen)) {
-                            nodes[packet.from_id].lastSeen = packet.timestamp;
-                        }
-                    } else {
-                        // Node not in NODEINFO, add from packet
-                        nodes[packet.from_id] = {
-                            id: packet.from_id,
-                            name: packet.from_name || packet.from_id || 'Unknown',
-                            shortName: '',
-                            lastSeen: packet.timestamp,
-                            backend: packet.backend || (packet.from_id.startsWith('mc:') ? 'meshcore' : 'meshtastic'),
-                        };
-                    }
-                });
-
                 appState.nodes = nodes;
                 // Sort by lastSeen descending (most recent first)
                 const sortedNodes = Object.values(nodes).sort((a, b) => {
@@ -2352,11 +2334,11 @@
             }
         }
 
-        function renderNodes(nodes) {
+        function renderNodes(nodes, append) {
             const container = document.getElementById('nodes-container');
-            container.innerHTML = '';
-            
-            if (nodes.length === 0) {
+            if (!append) container.innerHTML = '';
+
+            if (nodes.length === 0 && !append) {
                 container.innerHTML = `
                     <div class="col-12">
                         <div class="card card-modern">
@@ -4270,6 +4252,19 @@
         let msgState = { activeThread: null, pollTimer: null };
 
         function fetchConversations() {
+            // Populate device selector
+            const devSel = document.getElementById('msg-device-select');
+            if (devSel) {
+                const entries = (appState.backendEntries || []).filter(e => e.connected);
+                const current = devSel.value;
+                let html = '<option value="">All Devices</option>';
+                entries.forEach(e => {
+                    const tn = (e.type||'').charAt(0).toUpperCase() + (e.type||'').slice(1);
+                    html += `<option value="${e.device_id}">${tn}: ${e.device_name||e.device_id}</option>`;
+                });
+                devSel.innerHTML = html;
+                devSel.value = current;
+            }
             fetch('/conversations')
                 .then(r => { if (r.status === 401) throw new Error('auth'); return r.json(); })
                 .then(data => renderThreadList(data.conversations || []))
@@ -4434,10 +4429,22 @@
             document.getElementById('conv-name').textContent = 'New Message';
             document.getElementById('messages-container')?.classList.add('thread-open');
 
-            const nodes = (appState.sortedNodes || []).filter(n => {
+            let nodes = (appState.sortedNodes || []).filter(n => {
                 const nid = n.id || '';
                 return nid !== 'broadcast' && nid !== 'self' && !nid.startsWith('channel:');
             });
+            // Filter by selected device type
+            const devSel = document.getElementById('msg-device-select');
+            if (devSel && devSel.value) {
+                const entry = (appState.backendEntries || []).find(e => e.device_id === devSel.value);
+                if (entry) {
+                    const bt = entry.type;
+                    nodes = nodes.filter(n => {
+                        const nb = n.backend || (n.id && n.id.startsWith('mc:') ? 'meshcore' : 'meshtastic');
+                        return nb === bt;
+                    });
+                }
+            }
 
             let html = '<div style="padding:1rem;">';
             html += '<input type="text" id="new-msg-search" class="form-control form-control-modern mb-2" placeholder="Search nodes..." style="border-radius:20px;" autofocus>';
