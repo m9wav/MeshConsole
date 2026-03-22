@@ -905,6 +905,10 @@
 
                 <!-- Send Message Tab -->
                 <div class="tab-pane fade" id="send" role="tabpanel">
+                    <!-- Hidden stubs for backward-compat JS references -->
+                    <div style="display:none;">
+                        <form id="send-message-form"><input id="destination-node"><input id="destination-node-value"><div id="destination-autocomplete"></div><select id="send-source-device"></select><textarea id="message-text"></textarea><span id="char-count"></span><input id="want-ack" type="checkbox"><div id="send-status"></div></form>
+                    </div>
                     <div class="alert alert-warning auth-required-banner mb-3" id="send-auth-banner" style="display: none;">
                         <i class="bi bi-lock"></i> <strong>Authentication Required</strong> — Log in to access all features.
                     </div>
