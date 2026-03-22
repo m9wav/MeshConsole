@@ -873,6 +873,12 @@
                                 <div class="card-body">
                                     <form id="send-message-form">
                                         <div class="mb-3">
+                                            <label class="form-label">Send From</label>
+                                            <select class="form-select form-control-modern" id="send-source-device">
+                                                <option value="">Auto (any device)</option>
+                                            </select>
+                                        </div>
+                                        <div class="mb-3">
                                             <label for="destination-node" class="form-label">Destination Node</label>
                                             <div class="autocomplete-container">
                                                 <input type="text" class="form-control form-control-modern" id="destination-node" autocomplete="off" placeholder="Search nodes..." required>
@@ -2499,6 +2505,7 @@
                 const destination = document.getElementById('destination-node-value').value || document.getElementById('destination-node').dataset.selectedId;
                 const message = document.getElementById('message-text').value;
                 const wantAck = document.getElementById('want-ack').checked;
+                const sourceDevice = document.getElementById('send-source-device').value;
                 
                 if (!destination || !message) {
                     showAlert('Please select a destination and enter a message.', 'warning');
@@ -2520,7 +2527,8 @@
                 body: JSON.stringify({
                     destination: destination,
                     message: message,
-                    wantAck: wantAck
+                    wantAck: wantAck,
+                    device_id: sourceDevice || undefined
                 })
             })
             .then(response => {
@@ -2561,30 +2569,44 @@
             });
         }
 
+        function populateSourceDevices() {
+            const select = document.getElementById('send-source-device');
+            if (!select) return;
+            const entries = appState.backendEntries || [];
+            if (!entries.length) return;
+            const current = select.value;
+            let html = '<option value="">Auto (any device)</option>';
+            entries.forEach(e => {
+                if (!e.connected) return;
+                const typeName = (e.type || '').charAt(0).toUpperCase() + (e.type || '').slice(1);
+                const name = e.device_name || e.device_id;
+                html += `<option value="${e.device_id}">${typeName}: ${name}</option>`;
+            });
+            select.innerHTML = html;
+            select.value = current;
+        }
+
         // ── Channel messaging ─────────────────────────────
         function loadChannels() {
             const section = document.getElementById('channel-msg-section');
-            const chSelect = document.getElementById('channel-select');
             const devSelect = document.getElementById('channel-device-select');
+            const entries = appState.backendEntries || [];
+            const connected = entries.filter(e => e.connected);
 
-            // Load devices
-            fetch('/meshcore/devices').then(r => r.json()).then(data => {
-                const devices = data.devices || [];
-                if (devices.length === 0) {
-                    if (section) section.style.display = 'none';
-                    return;
-                }
-                if (section) section.style.display = '';
-                devSelect.innerHTML = '';
-                devices.forEach(d => {
-                    const opt = document.createElement('option');
-                    opt.value = d.device_id;
-                    opt.textContent = d.device_name || d.device_id;
-                    devSelect.appendChild(opt);
-                });
-                // Load channels for first device
-                loadChannelsForDevice(devices[0].device_id);
-            }).catch(() => { if (section) section.style.display = 'none'; });
+            if (connected.length === 0) {
+                if (section) section.style.display = 'none';
+                return;
+            }
+            if (section) section.style.display = '';
+            devSelect.innerHTML = '';
+            connected.forEach(e => {
+                const opt = document.createElement('option');
+                opt.value = e.device_id;
+                const typeName = (e.type || '').charAt(0).toUpperCase() + (e.type || '').slice(1);
+                opt.textContent = `${typeName}: ${e.device_name || e.device_id}`;
+                devSelect.appendChild(opt);
+            });
+            loadChannelsForDevice(connected[0].device_id);
         }
 
         function loadChannelsForDevice(deviceId) {
@@ -3104,6 +3126,7 @@
         let _lastFilterOptions = '';
         function updateBackendFilterDropdown(entries) {
             appState.backendEntries = entries;
+            populateSourceDevices();
             const select = document.getElementById('backend-filter');
             if (!select) return;
             // Build option set: type groups + individual devices if >1 of same type

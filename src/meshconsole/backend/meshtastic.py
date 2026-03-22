@@ -232,6 +232,37 @@ class MeshtasticBackend(MeshBackend):
         except Exception as e:
             logger.error(f"Failed to send message to {destination}: {e}")
 
+    def send_channel_message(self, channel_idx: int, message: str) -> None:
+        """Send a text message to a Meshtastic channel."""
+        try:
+            self._interface.sendText(
+                text=message,
+                channelIndex=channel_idx,
+                wantAck=True
+            )
+            logger.info(f"Sent channel {channel_idx} message: {message}")
+        except Exception as e:
+            logger.error(f"Failed to send to channel {channel_idx}: {e}")
+            raise
+
+    def get_channels(self) -> list[dict]:
+        """Return Meshtastic channel list."""
+        channels = []
+        if not self._interface:
+            return channels
+        try:
+            node = self._interface.getNode('^local')
+            if node and hasattr(node, 'channels'):
+                for ch in node.channels:
+                    if ch.role != 0:  # 0 = DISABLED
+                        name = ch.settings.name if ch.settings.name else f'Channel {ch.index}'
+                        if ch.index == 0 and not ch.settings.name:
+                            name = 'Primary'
+                        channels.append({'index': ch.index, 'name': name})
+        except Exception as e:
+            logger.debug(f"Error getting channels: {e}")
+        return channels
+
     def send_traceroute(self, destination: str, hop_limit: int = 10) -> None:
         """Send a traceroute request to the destination node."""
         try:
