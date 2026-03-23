@@ -1726,7 +1726,7 @@ class MeshtasticTool:
         for (raw_json,) in db_rows:
             try:
                 raw = json.loads(raw_json) if isinstance(raw_json, str) else raw_json
-                full_key = raw.get('public_key', '')
+                full_key = raw.get('public_key', '') or raw.get('adv_key', '')
                 if not full_key or full_key.lower() in seen_keys:
                     continue
                 if len(full_key) >= hash_size * 2:
@@ -1862,7 +1862,7 @@ class MeshtasticTool:
         for (raw_json,) in db_rows:
             try:
                 raw = json.loads(raw_json) if isinstance(raw_json, str) else raw_json
-                full_key = raw.get('public_key', '')
+                full_key = raw.get('public_key', '') or raw.get('adv_key', '')
                 if not full_key or full_key.lower() in seen_keys:
                     continue
                 if len(full_key) >= 2:

@@ -554,6 +554,8 @@ class MeshCoreBackend(MeshBackend):
         # Enrich raw_packet with resolved data so it persists to DB
         enriched_raw = dict(payload)
         enriched_raw["adv_name"] = adv_name
+        if pub_key:
+            enriched_raw["public_key"] = pub_key
         if latitude:
             enriched_raw["adv_lat"] = latitude
         if longitude:
