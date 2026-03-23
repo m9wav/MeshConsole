@@ -80,6 +80,7 @@ class MeshCoreBackend(MeshBackend):
         self._local_node_id: str | None = None
         self._local_pub_key: str | None = None
         self._device_name: str | None = None
+        self._recent_advert_emits: dict[str, float] = {}  # prefix -> timestamp
 
         # Asyncio event loop (owned by background thread)
         self._loop: Optional[asyncio.AbstractEventLoop] = None
@@ -530,6 +531,11 @@ class MeshCoreBackend(MeshBackend):
         )
         prefix = pub_key[:12] if pub_key else "unknown"
 
+        # Skip if RX_LOG_DATA already emitted a packet for this advert recently
+        last_emit = self._recent_advert_emits.get(prefix, 0)
+        if time.time() - last_emit < 3:
+            return
+
         # Look up existing contact info for richer data
         existing = self._contacts.get(prefix, {})
         adv_name = (
@@ -732,8 +738,10 @@ class MeshCoreBackend(MeshBackend):
 
         # Skip types that have dedicated event handlers to avoid duplicates.
         # CONTACT_MSG_RECV handles TXT_MSG, CHANNEL_MSG_RECV handles GRP_TXT,
-        # ADVERTISEMENT handles ADVERT, _on_ack handles ACK.
-        handled_types = {"TXT_MSG", "TEXT_MSG", "GRP_TXT", "ADVERT", "ACK"}
+        # Dedicated handlers: CONTACT_MSG_RECV for TXT_MSG, CHANNEL_MSG_RECV
+        # for GRP_TXT, _on_ack for ACK. ADVERT is NOT skipped here — the
+        # _on_advertisement handler may not fire for all nodes.
+        handled_types = {"TXT_MSG", "TEXT_MSG", "GRP_TXT", "ACK"}
         if payload_type in handled_types:
             return
 
@@ -777,6 +785,9 @@ class MeshCoreBackend(MeshBackend):
             raw_packet=payload,
         )
         self._emit_packet(packet)
+        # Track ADVERT emits to prevent duplicate from _on_advertisement
+        if payload_type == "ADVERT" and adv_key:
+            self._recent_advert_emits[adv_key[:12]] = time.time()
 
     async def _on_messages_waiting(self, event):
         """Handle MESSAGES_WAITING — trigger message fetch."""
