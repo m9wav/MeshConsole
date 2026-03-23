@@ -1801,10 +1801,14 @@
 
             const backendBadge = getBackendBadge(packet) + getDeviceBadge(packet);
 
-            const rssiDisplay = formatSignalValue(packet.rssi, 'dBm');
-            const snrDisplay = formatSignalValue(packet.snr, 'dB');
-            const hopDisplay = (packet.hop_limit !== null && packet.hop_limit !== undefined && packet.hop_limit !== 'N/A')
-                ? packet.hop_limit : 'N/A';
+            // Extract signal data — try packet fields first, fall back to raw_packet
+            const raw = (typeof packet.raw_packet === 'object' && packet.raw_packet) ? packet.raw_packet : {};
+            const rssiVal = packet.rssi || raw.rssi || raw.rxRssi;
+            const snrVal = packet.snr || raw.snr || raw.rxSnr;
+            const rssiDisplay = formatSignalValue(rssiVal, 'dBm');
+            const snrDisplay = formatSignalValue(snrVal, 'dB');
+            const hopVal = packet.hop_limit || raw.path_len || raw.hopLimit;
+            const hopDisplay = (hopVal !== null && hopVal !== undefined && hopVal !== 'N/A') ? hopVal : null;
             const hopLabel = (packet.backend === 'meshcore') ? 'Path Length' : 'Hop Limit';
 
             const routeTrailHtml = renderRouteTrail(packet);
@@ -1826,10 +1830,10 @@
                     ${renderPacketContent(packet, index)}
                     <div class="row mt-3 text-muted small">
                         <div class="col-md-6">
-                            <i class="bi bi-signal"></i> RSSI: ${rssiDisplay} | SNR: ${snrDisplay}
+                            ${rssiDisplay !== 'N/A' || snrDisplay !== 'N/A' ? `<i class="bi bi-signal"></i> ${rssiDisplay !== 'N/A' ? 'RSSI: ' + rssiDisplay : ''}${rssiDisplay !== 'N/A' && snrDisplay !== 'N/A' ? ' | ' : ''}${snrDisplay !== 'N/A' ? 'SNR: ' + snrDisplay : ''}` : ''}
                         </div>
                         <div class="col-md-6 text-end">
-                            <i class="bi bi-layers"></i> ${hopLabel}: ${hopDisplay}
+                            ${hopDisplay ? `<i class="bi bi-layers"></i> ${hopLabel}: ${hopDisplay}` : ''}
                         </div>
                     </div>
                     ${routeTrailHtml}
@@ -5044,7 +5048,7 @@
     </div>
 
     <!-- Footer -->
-    <footer class="text-center py-3" style="background: #ffffff; color: #475569; font-size: 0.875rem; font-weight: 500; border-radius: 10px; margin: 10px 20px 20px 20px;">
+    <footer class="text-center" style="background: #ffffff; color: #475569; font-size: 0.875rem; font-weight: 500; border-radius: 10px; margin: 5px 20px 20px; padding: 0.6rem;">
         MeshConsole by <a href="https://m9wav.uk/" target="_blank" rel="noopener" style="color: #2563eb; text-decoration: none;">M9WAV</a> <a href="https://github.com/m9wav/MeshConsole" target="_blank" rel="noopener" style="color: #475569; margin-left: 8px;"><i class="bi bi-github"></i></a>
     </footer>
 </body>

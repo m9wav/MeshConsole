@@ -428,6 +428,18 @@ class MeshCoreBackend(MeshBackend):
         )
         pubkey_prefix = payload.get("pubkey_prefix", "unknown")
 
+        # Enrich payload with cached RX signal data
+        snr = payload.get("snr") or self._last_rx_snr
+        rssi = payload.get("rssi") or self._last_rx_rssi
+        enriched = dict(payload)
+        if snr is not None:
+            enriched["snr"] = snr
+        if rssi is not None:
+            enriched["rssi"] = rssi
+        if self._last_rx_path:
+            enriched.setdefault("path", self._last_rx_path)
+            enriched.setdefault("path_hash_size", self._last_rx_path_hash_size)
+
         packet = UnifiedPacket(
             timestamp=timestamp,
             from_id=f"mc:{pubkey_prefix}",
@@ -437,10 +449,10 @@ class MeshCoreBackend(MeshBackend):
             port_name="TEXT_MESSAGE",
             backend=BackendType.MESHCORE,
             message=payload.get("text", ""),
-            snr=payload.get("snr") or self._last_rx_snr,
-            rssi=self._last_rx_rssi,
+            snr=snr,
+            rssi=rssi,
             hop_limit=payload.get("path_len"),
-            raw_packet=payload,
+            raw_packet=enriched,
         )
         self._last_rx_snr = None
         self._last_rx_rssi = None
@@ -478,6 +490,14 @@ class MeshCoreBackend(MeshBackend):
                     from_name = embedded_name
                     from_id = embedded_name
 
+        snr = payload.get("snr") or self._last_rx_snr
+        rssi = payload.get("rssi") or self._last_rx_rssi
+        enriched = dict(payload)
+        if snr is not None:
+            enriched["snr"] = snr
+        if rssi is not None:
+            enriched["rssi"] = rssi
+
         packet = UnifiedPacket(
             timestamp=timestamp,
             from_id=from_id,
@@ -487,9 +507,9 @@ class MeshCoreBackend(MeshBackend):
             port_name="TEXT_MESSAGE",
             backend=BackendType.MESHCORE,
             message=payload.get("text", ""),
-            snr=payload.get("snr") or self._last_rx_snr,
-            rssi=self._last_rx_rssi,
-            raw_packet=payload,
+            snr=snr,
+            rssi=rssi,
+            raw_packet=enriched,
         )
         self._last_rx_snr = None
         self._last_rx_rssi = None
@@ -539,6 +559,7 @@ class MeshCoreBackend(MeshBackend):
         if self._last_rx_path:
             enriched_raw["path"] = self._last_rx_path
             enriched_raw["path_hash_size"] = self._last_rx_path_hash_size
+            enriched_raw["path_len"] = len(self._last_rx_path) // max(1, self._last_rx_path_hash_size * 2)
 
         packet = UnifiedPacket(
             timestamp=datetime.now().isoformat(),
@@ -551,6 +572,7 @@ class MeshCoreBackend(MeshBackend):
             payload=f"Advertisement: {adv_name}",
             latitude=latitude,
             longitude=longitude,
+            hop_limit=enriched_raw.get("path_len"),
             snr=snr,
             rssi=rssi,
             raw_packet=enriched_raw,
