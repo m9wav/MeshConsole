@@ -677,8 +677,10 @@ def create_app(orchestrator):
         try:
             max_nodes = int(request.args.get('max_nodes', 80))
             min_count = int(request.args.get('min_count', 2))
+            device_ids = request.args.get('device_ids', '')
+            device_id_list = [d.strip() for d in device_ids.split(',') if d.strip()] if device_ids else None
             graph_data = orchestrator.get_mesh_graph_data(
-                max_nodes=max_nodes, min_count=min_count
+                max_nodes=max_nodes, min_count=min_count, device_ids=device_id_list
             )
             return jsonify(graph_data)
         except Exception as e:
