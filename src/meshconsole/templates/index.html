@@ -1087,6 +1087,7 @@
                             </button>
                         </div>
                     </div>
+                    <div id="graph-device-filters" class="mb-2" style="display:none;"></div>
                     <div class="mesh-graph-container" id="mesh-graph-container">
                         <!-- SVG and controls injected by JS -->
                         <div class="mesh-graph-empty" id="mesh-graph-empty">
@@ -4608,9 +4609,36 @@
             maxNodes: 80,
         };
 
+        function populateGraphDeviceFilters() {
+            const container = document.getElementById('graph-device-filters');
+            if (!container) return;
+            const entries = (appState.backendEntries || []).filter(e => e.connected && e.type === 'meshcore');
+            if (entries.length <= 1) { container.style.display = 'none'; return; }
+            container.style.display = '';
+            let html = '<small class="text-muted me-2">Devices:</small>';
+            entries.forEach(e => {
+                const name = e.device_name || e.device_id;
+                const checked = (meshGraphState.selectedDevices || []).includes(e.device_id) || !(meshGraphState.selectedDevices);
+                html += `<div class="form-check form-check-inline"><input class="form-check-input" type="checkbox" id="gd-${e.device_id}" value="${e.device_id}" ${checked ? 'checked' : ''} onchange="graphDeviceFilterChanged()"><label class="form-check-label small" for="gd-${e.device_id}">${name}</label></div>`;
+            });
+            container.innerHTML = html;
+        }
+
+        function graphDeviceFilterChanged() {
+            const checkboxes = document.querySelectorAll('#graph-device-filters input[type=checkbox]');
+            meshGraphState.selectedDevices = Array.from(checkboxes).filter(cb => cb.checked).map(cb => cb.value);
+            appState.meshGraphLoaded = false;
+            fetchMeshGraph();
+        }
+
         function fetchMeshGraph() {
+            populateGraphDeviceFilters();
             const maxNodes = meshGraphState.maxNodes || 80;
-            fetch(`/mesh-graph?max_nodes=${maxNodes}`)
+            let url = `/mesh-graph?max_nodes=${maxNodes}`;
+            if (meshGraphState.selectedDevices && meshGraphState.selectedDevices.length > 0) {
+                url += `&device_ids=${encodeURIComponent(meshGraphState.selectedDevices.join(','))}`;
+            }
+            fetch(url)
                 .then(r => r.json())
                 .then(data => {
                     appState.meshGraphLoaded = true;

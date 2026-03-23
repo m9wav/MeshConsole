@@ -1812,7 +1812,7 @@ class MeshtasticTool:
 
         return hops
 
-    def get_mesh_graph_data(self, max_nodes: int = 0, min_count: int = 2) -> dict:
+    def get_mesh_graph_data(self, max_nodes: int = 0, min_count: int = 2, device_ids: list[str] | None = None) -> dict:
         """Return graph data for D3.js force-directed visualization.
 
         Reads from the RouteAnalyzer's adjacency cache and the node hash
@@ -1833,9 +1833,11 @@ class MeshtasticTool:
         hash_to_pubkeys: dict[str, list[str]] = {}
         seen_keys: set[str] = set()
 
-        # Source 1: live MeshCore contacts
+        # Source 1: live MeshCore contacts (filtered by device_ids if specified)
         for backend in self.backends:
             if backend.backend_type == BackendType.MESHCORE:
+                if device_ids and backend.device_id not in device_ids:
+                    continue
                 for prefix, contact in backend._contacts.items():
                     full_key = contact.get('_full_pub_key', '') or contact.get('public_key', '')
                     if full_key and len(full_key) >= 2:
@@ -2047,6 +2049,8 @@ class MeshtasticTool:
 
         for backend in self.backends:
             if backend.backend_type == BackendType.MESHCORE:
+                if device_ids and backend.device_id not in device_ids:
+                    continue
                 local_key = getattr(backend, '_local_pub_key', '') or ''
                 local_name = getattr(backend, '_device_name', '') or 'Local'
                 if local_key and len(local_key) >= 12:
