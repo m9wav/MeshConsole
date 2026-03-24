@@ -1711,7 +1711,13 @@
                     // Update packet count
                     const start = packets.length > 0 ? appState.offset + 1 : 0;
                     const end = appState.offset + packets.length;
-                    const filterText = appState.portFilter ? ` (${appState.portFilter})` : '';
+                    let filterText = '';
+                    if (appState.portFilter) {
+                        // Show the friendly label from the dropdown instead of raw port names
+                        const portSelect = document.getElementById('port-filter');
+                        const selectedOption = portSelect ? portSelect.options[portSelect.selectedIndex] : null;
+                        filterText = selectedOption && selectedOption.value ? ` (${selectedOption.textContent})` : '';
+                    }
                     document.getElementById('packet-count').textContent =
                         `Showing ${start}-${end} of ${total} packets${filterText}`;
                 })
@@ -1799,6 +1805,16 @@
             const fromId = packet.from_id;
             const toId = packet.to_id;
 
+            // Channel badge for channel messages
+            const isChannel = toId && (toId.startsWith('channel:') || toId === '^all');
+            let toDisplay = toName;
+            if (isChannel && toId.startsWith('channel:')) {
+                const chName = toId.replace('channel:', '');
+                toDisplay = `<i class="bi bi-megaphone"></i> ${chName}`;
+            } else if (toId === '^all') {
+                toDisplay = `<i class="bi bi-broadcast"></i> all`;
+            }
+
             // Escape names for use in onclick attributes
             const fromNameEscaped = fromName.replace(/'/g, "\\'").replace(/"/g, '&quot;');
             const toNameEscaped = toName.replace(/'/g, "\\'").replace(/"/g, '&quot;');
@@ -1811,11 +1827,30 @@
             const snrVal = packet.snr || raw.snr || raw.rxSnr;
             const rssiDisplay = formatSignalValue(rssiVal, 'dBm');
             const snrDisplay = formatSignalValue(snrVal, 'dB');
-            const hopVal = packet.hop_limit || raw.path_len || raw.hopLimit;
-            const hopDisplay = (hopVal !== null && hopVal !== undefined && hopVal !== 'N/A') ? hopVal : null;
-            const hopLabel = (packet.backend === 'meshcore') ? 'Path Length' : 'Hop Limit';
+            let hopDisplay = null;
+            let hopLabel = '';
+            if (packet.backend === 'meshcore') {
+                const pathLen = packet.hop_limit || raw.path_len;
+                if (pathLen !== null && pathLen !== undefined && pathLen !== 'N/A') {
+                    hopDisplay = pathLen;
+                    hopLabel = 'Path Length';
+                }
+            } else {
+                const hopStart = raw.hopStart;
+                const hopLimit = packet.hop_limit || raw.hopLimit;
+                if (hopStart && hopLimit !== null && hopLimit !== undefined) {
+                    const hopsUsed = hopStart - hopLimit;
+                    hopDisplay = `${hopsUsed} of ${hopStart}`;
+                    hopLabel = 'Hops';
+                } else if (hopLimit !== null && hopLimit !== undefined && hopLimit !== 'N/A') {
+                    hopDisplay = hopLimit;
+                    hopLabel = 'Hop Limit';
+                }
+            }
 
-            const routeTrailHtml = renderRouteTrail(packet);
+            // Skip RX trail for TRACEROUTE packets (path shown in body)
+            const isMcTrace = packet.backend === 'meshcore' && (packet.port_name === 'TRACEROUTE' || packet.port_name === 'TRACEROUTE_APP');
+            const routeTrailHtml = isMcTrace ? '' : renderRouteTrail(packet);
 
             card.innerHTML = `
                 <div class="card-header card-header-modern">
@@ -1826,7 +1861,7 @@
                         <div>
                             <span class="node-badge node-badge-clickable" onclick="filterByNode('${fromId}', '${fromNameEscaped}')" title="Filter by this node">${fromName}</span>
                             <i class="bi bi-arrow-right mx-2"></i>
-                            <span class="node-badge node-badge-clickable" onclick="filterByNode('${toId}', '${toNameEscaped}')" title="Filter by this node">${toName}</span>
+                            <span class="node-badge node-badge-clickable" onclick="filterByNode('${toId}', '${toNameEscaped}')" title="Filter by this node">${toDisplay}</span>
                         </div>
                     </div>
                 </div>
@@ -1962,16 +1997,54 @@
                     let traceContent = '';
                     const raw = packet.raw_packet || {};
                     if (packet.backend === 'meshcore') {
-                        const hopCount = (packet.hop_limit !== null && packet.hop_limit !== undefined && packet.hop_limit !== 'N/A') ? packet.hop_limit : (packet.route_hops ? packet.route_hops.length : '?');
-                        // Show origin and destination from route if available
-                        if (packet.route_hops && packet.route_hops.length >= 2) {
-                            const firstKnown = packet.route_hops.find(h => h.name && h.candidates === 1);
-                            const lastKnown = [...packet.route_hops].reverse().find(h => h.name && h.candidates === 1);
-                            const origin = firstKnown ? firstKnown.name : packet.route_hops[0].hash;
-                            const dest = lastKnown && lastKnown !== firstKnown ? lastKnown.name : packet.route_hops[packet.route_hops.length-1].hash;
-                            traceContent = `<p><i class="bi bi-arrow-right-circle"></i> <strong>${origin}</strong> → <strong>${dest}</strong> <span class="text-muted">(${hopCount} hops)</span></p>`;
+                        // Check if this is a PATH_RESPONSE (our traceroute result) with out_path/in_path
+                        const outPath = raw.out_path || '';
+                        const inPath = raw.in_path || '';
+                        const destPrefix = raw.pubkey_pre || '';
+
+                        if (outPath || inPath) {
+                            // This is a traceroute RESULT — show outbound and inbound paths
+                            traceContent = `<p class="mb-1"><i class="bi bi-signpost-2"></i> <strong>Traceroute Result</strong>${destPrefix ? ' to <code>' + destPrefix + '</code>' : ''}</p>`;
+                            if (outPath) {
+                                const outLen = raw.out_path_len || (outPath.length / 2);
+                                traceContent += `<div class="mb-1"><small class="text-muted">Outbound (${outLen} hops):</small> <code style="font-size:0.75rem;word-break:break-all;">${outPath}</code></div>`;
+                            }
+                            if (inPath) {
+                                const inLen = raw.in_path_len || (inPath.length / 2);
+                                traceContent += `<div><small class="text-muted">Inbound (${inLen} hops):</small> <code style="font-size:0.75rem;word-break:break-all;">${inPath}</code></div>`;
+                            }
                         } else {
-                            traceContent = `<p>Trace packet: ${hopCount} hops</p>`;
+                            // Observed trace/path packet — show the RX path as a visual route
+                            const hops = packet.route_hops || [];
+                            const hopCount = hops.length || packet.hop_limit || '?';
+                            const typeName = raw.payload_typename === 'TRACE' ? 'Trace Packet' : 'Path Discovery';
+                            if (hops.length >= 2) {
+                                const originHop = hops[0];
+                                const destHop = hops[hops.length - 1];
+                                const originName = originHop.name || originHop.hash;
+                                const destName = destHop.name || destHop.hash;
+
+                                // Summary line: origin region → your node
+                                let summary = `<p class="mb-1"><i class="bi bi-signpost-2"></i> <strong>${typeName}</strong> `;
+                                summary += `<span class="text-muted">from near</span> <strong>${originName}</strong> `;
+                                summary += `<span class="text-muted">→</span> <strong>${destName}</strong> `;
+                                summary += `<span class="text-muted">(${hopCount} hops)</span></p>`;
+
+                                // Compact path — normal weight, muted colours
+                                let pathHtml = '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:2px;margin:0.2rem 0;">';
+                                hops.forEach((h, i) => {
+                                    const name = h.name || h.hash;
+                                    const isResolved = h.candidates === 1 || h.confidence >= 0.7;
+                                    const color = isResolved ? '#2563eb' : (h.candidates > 0 ? '#d97706' : '#94a3b8');
+                                    const style = `color:${color};font-size:0.78rem;font-weight:400`;
+                                    pathHtml += `<span style="${style}" title="${h.hash} (${Math.round((h.confidence||0)*100)}%)">${name}</span>`;
+                                    if (i < hops.length - 1) pathHtml += '<i class="bi bi-chevron-right" style="font-size:0.55rem;opacity:0.35;"></i>';
+                                });
+                                pathHtml += '</div>';
+                                traceContent = summary + pathHtml;
+                            } else {
+                                traceContent = `<p><i class="bi bi-signpost-2"></i> ${typeName}: ${hopCount} hops</p>`;
+                            }
                         }
                     } else {
                         const route = raw.decoded?.traceroute?.route || [];
@@ -1989,11 +2062,33 @@
                 
                 case 'ROUTING':
                 case 'ROUTING_APP':
-                case 'ANON_REQ':
-                    return `
-                        <h6><i class="bi bi-signpost text-secondary"></i> Routing Data</h6>
-                        <p>${packet.payload || 'Routing acknowledgment received.'}</p>
-                    `;
+                case 'ANON_REQ': {
+                    const rraw = packet.raw_packet || {};
+                    const rtype = rraw.payload_typename || '';
+                    const rpayload = rraw.pkt_payload || '';
+                    const target = packet.target_node;
+                    let targetDisplay = '';
+                    if (target) {
+                        if (target.candidates === 1 && target.name) {
+                            targetDisplay = `<strong style="color:#2563eb;">${target.name}</strong>`;
+                        } else {
+                            // Unknown node — show truncated prefix
+                            const prefix = target.prefix || rpayload.slice(0, 12);
+                            targetDisplay = `<span style="color:#94a3b8;">unknown node <code>${prefix.slice(0,8)}</code></span>`;
+                        }
+                    } else if (rpayload) {
+                        targetDisplay = `<span style="color:#94a3b8;">unknown node <code>${rpayload.slice(0,8)}</code></span>`;
+                    }
+
+                    if (rtype === 'REQ') {
+                        return `<p><i class="bi bi-search text-primary"></i> Route request ${targetDisplay ? 'for ' + targetDisplay : ''}</p>`;
+                    } else if (rtype === 'RESPONSE') {
+                        return `<p><i class="bi bi-reply text-success"></i> Route response ${targetDisplay ? 'for ' + targetDisplay : ''}</p>`;
+                    } else if (rtype === 'ANON_REQ') {
+                        return `<p><i class="bi bi-question-circle text-info"></i> Anonymous info request ${targetDisplay ? 'about ' + targetDisplay : ''}</p>`;
+                    }
+                    return `<p><i class="bi bi-signpost text-secondary"></i> ${packet.payload || 'Routing data'}</p>`;
+                }
 
                 case 'STATUS':
                     return `

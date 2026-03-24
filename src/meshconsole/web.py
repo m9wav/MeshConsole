@@ -195,7 +195,7 @@ def create_app(orchestrator):
             packets = packets[::-1]
             paginated_packets = packets[offset:offset + limit]
 
-        # Enrich MeshCore packets with decoded route data
+        # Enrich MeshCore packets with decoded route data + target resolution
         for packet in paginated_packets:
             raw = packet.get('raw_packet', {})
             if packet.get('backend') == 'meshcore' and isinstance(raw, dict):
@@ -203,6 +203,114 @@ def create_app(orchestrator):
                 if path and len(path) >= 4:
                     hash_size = raw.get('path_hash_size', 1) or 1
                     packet['route_hops'] = orchestrator.decode_route(path, hash_size)
+
+                # Resolve routing target from pkt_payload
+                pkt_payload = raw.get('pkt_payload', '')
+                pt = raw.get('payload_typename', '')
+                if pt in ('REQ', 'RESPONSE', 'ANON_REQ') and pkt_payload and len(pkt_payload) >= 2:
+                    target_prefix = pkt_payload[:12].lower()
+                    target_hash = pkt_payload[:2].lower()
+
+                    # Try exact 6-byte prefix match first (much more specific)
+                    exact_name = None
+                    for b in orchestrator.backends:
+                        if b.backend_type.value != 'meshcore':
+                            continue
+                        for pfx, contact in getattr(b, '_contacts', {}).items():
+                            full_key = contact.get('_full_pub_key', '') or contact.get('public_key', '')
+                            if full_key and full_key[:12].lower() == target_prefix:
+                                exact_name = contact.get('adv_name', '') or pfx
+                                break
+                        if exact_name:
+                            break
+
+                    # Also check DB
+                    if not exact_name:
+                        try:
+                            with orchestrator.db_handler.lock:
+                                orchestrator.db_handler.cursor.execute(
+                                    "SELECT raw_packet FROM packets WHERE port_name IN ('NODEINFO','NODEINFO_APP') "
+                                    "AND backend='meshcore' ORDER BY timestamp DESC"
+                                )
+                                for (rj,) in orchestrator.db_handler.cursor.fetchall():
+                                    rp = json.loads(rj) if isinstance(rj, str) else rj
+                                    pk = (rp.get('public_key', '') or rp.get('adv_key', '')).lower()
+                                    if pk and pk[:12] == target_prefix:
+                                        exact_name = rp.get('adv_name', '')
+                                        break
+                        except Exception:
+                            pass
+
+                    if exact_name:
+                        packet['target_node'] = {
+                            'name': exact_name,
+                            'candidates': 1,
+                            'confidence': 1.0,
+                            'hash': target_hash,
+                            'prefix': target_prefix,
+                        }
+                    else:
+                        # Fall back to 1-byte hash, then narrow by 6-byte prefix
+                        hops = orchestrator.decode_route(pkt_payload[:2], 1)
+                        if hops and hops[0]['candidates'] > 0:
+                            # Filter candidates: only keep those whose full pubkey starts with our 6-byte prefix
+                            cand_names = hops[0].get('candidate_names', [])
+                            narrowed = []
+                            for cn in cand_names:
+                                # Check all backends for this candidate's full key
+                                for b in orchestrator.backends:
+                                    if b.backend_type.value != 'meshcore':
+                                        continue
+                                    for pfx, contact in getattr(b, '_contacts', {}).items():
+                                        fk = (contact.get('_full_pub_key', '') or contact.get('public_key', '')).lower()
+                                        name = contact.get('adv_name', '') or pfx
+                                        if name == cn and fk:
+                                            if fk.startswith(target_prefix):
+                                                narrowed.append(cn)
+                                            break
+
+                            if len(narrowed) == 1:
+                                packet['target_node'] = {
+                                    'name': narrowed[0],
+                                    'candidates': 1,
+                                    'confidence': 1.0,
+                                    'hash': target_hash,
+                                    'prefix': target_prefix,
+                                }
+                            elif len(narrowed) > 1:
+                                packet['target_node'] = {
+                                    'name': narrowed[0],
+                                    'candidates': len(narrowed),
+                                    'confidence': 0.5,
+                                    'hash': target_hash,
+                                    'prefix': target_prefix,
+                                }
+                            elif len(cand_names) == 1:
+                                # Only 1 hash candidate, can't verify prefix but show it
+                                packet['target_node'] = {
+                                    'name': cand_names[0],
+                                    'candidates': 1,
+                                    'confidence': 0.8,
+                                    'hash': target_hash,
+                                    'prefix': target_prefix,
+                                }
+                            else:
+                                # No prefix match — genuinely unknown
+                                packet['target_node'] = {
+                                    'name': None,
+                                    'candidates': 0,
+                                    'confidence': 0,
+                                    'hash': target_hash,
+                                    'prefix': target_prefix,
+                                }
+                        else:
+                            packet['target_node'] = {
+                                'name': None,
+                                'candidates': 0,
+                                'confidence': 0,
+                                'hash': target_hash,
+                                'prefix': target_prefix,
+                            }
 
         try:
             response_data = {
