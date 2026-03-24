@@ -7,13 +7,15 @@
 </p>
 
 <p align="center">
-  <a href="https://pypi.org/project/meshconsole/"><img src="https://img.shields.io/pypi/v/meshconsole?v=3.8.11" alt="PyPI"></a>
+  <a href="https://pypi.org/project/meshconsole/"><img src="https://img.shields.io/pypi/v/meshconsole?v=3.9.0" alt="PyPI"></a>
   <a href="https://m9wav.uk/">m9wav.uk</a>
 </p>
 
 ---
 
 ## What's New
+
+**v3.9.0** -- Deep packet intelligence: MeshCore protocol-aware routing target and sender resolution using RX path context, traceroute visual paths, hops-used display, channel badges
 
 **v3.8.0** -- Private messaging: threaded conversation view with chat-style bubbles, per-device source selection, configurable DM privacy from feed
 

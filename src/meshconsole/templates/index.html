@@ -2069,23 +2069,46 @@
                     const target = packet.target_node;
                     let targetDisplay = '';
                     if (target) {
+                        const conf = Math.round((target.confidence || 0) * 100);
                         if (target.candidates === 1 && target.name) {
-                            targetDisplay = `<strong style="color:#2563eb;">${target.name}</strong>`;
+                            targetDisplay = `<strong style="color:#2563eb;" title="${conf}%">${target.name}</strong>`;
+                        } else if (target.candidates > 1 && target.candidate_names) {
+                            const names = target.candidate_names;
+                            const hasWinner = target.confidence >= 0.5;
+                            if (hasWinner) {
+                                const winner = names[0];
+                                const others = names.slice(1).join(', ');
+                                targetDisplay = `<strong style="color:#2563eb;" title="${conf}% confidence">${winner}</strong>`;
+                                if (others) targetDisplay += ` <span class="text-muted" style="font-size:0.72rem;">(or ${others})</span>`;
+                            } else {
+                                targetDisplay = names.map(n => `<span style="color:#d97706;" title="${conf}%">${n}</span>`).join('<span class="text-muted" style="font-size:0.72rem;"> / </span>');
+                            }
                         } else {
-                            // Unknown node — show truncated prefix
-                            const prefix = target.prefix || rpayload.slice(0, 12);
-                            targetDisplay = `<span style="color:#94a3b8;">unknown node <code>${prefix.slice(0,8)}</code></span>`;
+                            const h = target.hash || rpayload.slice(0, 8);
+                            targetDisplay = `<code style="color:#94a3b8;font-size:0.8rem;">${h}</code>`;
                         }
                     } else if (rpayload) {
-                        targetDisplay = `<span style="color:#94a3b8;">unknown node <code>${rpayload.slice(0,8)}</code></span>`;
+                        targetDisplay = `<code style="color:#94a3b8;font-size:0.8rem;">${rpayload.slice(0,8)}</code>`;
+                    }
+
+                    const sender = packet.sender_node;
+                    let senderDisplay = '';
+                    if (sender) {
+                        // Check if it's a resolved name or a raw prefix
+                        const isPrefix = /^[0-9a-f]{12}$/.test(sender);
+                        if (isPrefix) {
+                            senderDisplay = `<span class="text-muted">from</span> <code style="color:#94a3b8;">${sender.slice(0,8)}</code>`;
+                        } else {
+                            senderDisplay = `<span class="text-muted">from</span> <strong style="color:#2563eb;">${sender}</strong>`;
+                        }
                     }
 
                     if (rtype === 'REQ') {
-                        return `<p><i class="bi bi-search text-primary"></i> Route request ${targetDisplay ? 'for ' + targetDisplay : ''}</p>`;
+                        return `<p><i class="bi bi-search text-primary"></i> Route request ${targetDisplay ? 'for ' + targetDisplay : ''}${senderDisplay ? ' ' + senderDisplay : ''}</p>`;
                     } else if (rtype === 'RESPONSE') {
-                        return `<p><i class="bi bi-reply text-success"></i> Route response ${targetDisplay ? 'for ' + targetDisplay : ''}</p>`;
+                        return `<p><i class="bi bi-reply text-success"></i> Route response ${targetDisplay ? 'for ' + targetDisplay : ''}${senderDisplay ? ' ' + senderDisplay : ''}</p>`;
                     } else if (rtype === 'ANON_REQ') {
-                        return `<p><i class="bi bi-question-circle text-info"></i> Anonymous info request ${targetDisplay ? 'about ' + targetDisplay : ''}</p>`;
+                        return `<p><i class="bi bi-question-circle text-info"></i> Info request ${targetDisplay ? 'about ' + targetDisplay : ''}${senderDisplay ? ' ' + senderDisplay : ''}</p>`;
                     }
                     return `<p><i class="bi bi-signpost text-secondary"></i> ${packet.payload || 'Routing data'}</p>`;
                 }
