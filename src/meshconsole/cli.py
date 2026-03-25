@@ -25,7 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
 
-    parser.add_argument('--version', action='version', version='MeshConsole 3.9.1')
+    parser.add_argument('--version', action='version', version='MeshConsole 3.9.2')
 
     subparsers = parser.add_subparsers(dest='command', help='Available commands')
 

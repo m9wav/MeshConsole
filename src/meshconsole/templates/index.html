@@ -1729,6 +1729,11 @@
 
         function renderPackets(data) {
             const container = document.getElementById('packets-container');
+            // Clean up existing Leaflet maps before replacing DOM
+            Object.keys(appState.initializedMaps).forEach(mapId => {
+                try { appState.initializedMaps[mapId].remove(); } catch (e) {}
+            });
+            appState.initializedMaps = {};
             container.innerHTML = '';
 
             if (data.length === 0) {
