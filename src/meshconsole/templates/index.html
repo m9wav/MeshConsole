@@ -2026,8 +2026,8 @@
 
                                 // Summary line: origin region → your node
                                 let summary = `<p class="mb-1"><i class="bi bi-signpost-2"></i> <strong>${typeName}</strong> `;
-                                summary += `<span class="text-muted">from near</span> <strong>${originName}</strong> `;
-                                summary += `<span class="text-muted">→</span> <strong>${destName}</strong> `;
+                                summary += `<span class="text-muted">from near</span> ${nodeLink(originName, 'inherit', true)} `;
+                                summary += `<span class="text-muted">→</span> ${nodeLink(destName, 'inherit', true)} `;
                                 summary += `<span class="text-muted">(${hopCount} hops)</span></p>`;
 
                                 // Compact path — normal weight, muted colours
@@ -2036,8 +2036,7 @@
                                     const name = h.name || h.hash;
                                     const isResolved = h.candidates === 1 || h.confidence >= 0.7;
                                     const color = isResolved ? '#2563eb' : (h.candidates > 0 ? '#d97706' : '#94a3b8');
-                                    const style = `color:${color};font-size:0.78rem;font-weight:400`;
-                                    pathHtml += `<span style="${style}" title="${h.hash} (${Math.round((h.confidence||0)*100)}%)">${name}</span>`;
+                                    pathHtml += nodeLink(name, color, false).replace(/font-size:[^;]*;?/, 'font-size:0.78rem;');
                                     if (i < hops.length - 1) pathHtml += '<i class="bi bi-chevron-right" style="font-size:0.55rem;opacity:0.35;"></i>';
                                 });
                                 pathHtml += '</div>';
@@ -2071,17 +2070,15 @@
                     if (target) {
                         const conf = Math.round((target.confidence || 0) * 100);
                         if (target.candidates === 1 && target.name) {
-                            targetDisplay = `<strong style="color:#2563eb;" title="${conf}%">${target.name}</strong>`;
+                            targetDisplay = nodeLink(target.name, '#2563eb');
                         } else if (target.candidates > 1 && target.candidate_names) {
                             const names = target.candidate_names;
-                            const hasWinner = target.confidence >= 0.5;
-                            if (hasWinner) {
-                                const winner = names[0];
+                            if (target.confidence >= 0.5) {
+                                targetDisplay = nodeLink(names[0], '#2563eb');
                                 const others = names.slice(1).join(', ');
-                                targetDisplay = `<strong style="color:#2563eb;" title="${conf}% confidence">${winner}</strong>`;
                                 if (others) targetDisplay += ` <span class="text-muted" style="font-size:0.72rem;">(or ${others})</span>`;
                             } else {
-                                targetDisplay = names.map(n => `<span style="color:#d97706;" title="${conf}%">${n}</span>`).join('<span class="text-muted" style="font-size:0.72rem;"> / </span>');
+                                targetDisplay = names.map(n => nodeLink(n, '#d97706')).join('<span class="text-muted" style="font-size:0.72rem;"> / </span>');
                             }
                         } else {
                             const h = target.hash || rpayload.slice(0, 8);
@@ -2094,12 +2091,11 @@
                     const sender = packet.sender_node;
                     let senderDisplay = '';
                     if (sender) {
-                        // Check if it's a resolved name or a raw prefix
                         const isPrefix = /^[0-9a-f]{12}$/.test(sender);
                         if (isPrefix) {
                             senderDisplay = `<span class="text-muted">from</span> <code style="color:#94a3b8;">${sender.slice(0,8)}</code>`;
                         } else {
-                            senderDisplay = `<span class="text-muted">from</span> <strong style="color:#2563eb;">${sender}</strong>`;
+                            senderDisplay = `<span class="text-muted">from</span> ${nodeLink(sender, '#2563eb')}`;
                         }
                     }
 
@@ -2131,6 +2127,15 @@
                         <p>${packet.payload || 'Packet data received.'}</p>
                     `;
             }
+        }
+
+        // Make a node name clickable for filtering
+        function nodeLink(name, color, bold) {
+            const nd = (appState.sortedNodes || []).find(n => n.name === name);
+            const esc = (name || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+            const weight = bold ? 'font-weight:600;' : '';
+            if (nd) return `<span style="color:${color};${weight}cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px;" onclick="filterByNode('${nd.id}', '${esc}')" title="Filter by ${name}">${name}</span>`;
+            return `<span style="color:${color};${weight}">${name}</span>`;
         }
 
         function formatSignalValue(value, unit) {
@@ -2201,6 +2206,12 @@
 
                 if (isLocal) cls += ' hop-local';
                 const loopBadge = isLoop ? '<span title="Node seen earlier in route" style="font-size:0.6rem;vertical-align:super;">↻</span>' : '';
+                // Make resolved hops clickable
+                const nd = (hop.candidates > 0 && label !== hop.hash) ? (appState.sortedNodes || []).find(n => n.name === label) : null;
+                if (nd) {
+                    const esc = label.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                    return `<span class="${cls}" title="${tooltip}" style="cursor:pointer;text-decoration:underline dotted;text-underline-offset:2px;" onclick="filterByNode('${nd.id}', '${esc}')">${label}${loopBadge}</span>`;
+                }
                 return `<span class="${cls}" title="${tooltip}">${label}${loopBadge}</span>`;
             });
 
