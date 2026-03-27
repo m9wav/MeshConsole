@@ -7,13 +7,15 @@
 </p>
 
 <p align="center">
-  <a href="https://pypi.org/project/meshconsole/"><img src="https://img.shields.io/pypi/v/meshconsole?v=3.9.2" alt="PyPI"></a>
+  <a href="https://pypi.org/project/meshconsole/"><img src="https://img.shields.io/pypi/v/meshconsole?v=3.10.0" alt="PyPI"></a>
   <a href="https://m9wav.uk/">m9wav.uk</a>
 </p>
 
 ---
 
 ## What's New
+
+**v3.10.0** -- Performance and graph accuracy: candidate-level adjacency scoring for accurate topology, secondary hash-neighbor index (35x faster graph computation), incremental graph materialization with generation-aware caching, topology-anchored disambiguation for non-GPS nodes, canvas map rendering, data prefetching, SQL query optimisation
 
 **v3.9.0** -- Deep packet intelligence: MeshCore protocol-aware routing target and sender resolution using RX path context, traceroute visual paths, hops-used display, channel badges
 
@@ -229,7 +231,7 @@ pip install meshconsole[all] gunicorn
 Create a `wsgi.py` entry point, then run with gunicorn:
 
 ```bash
-gunicorn --workers 1 --threads 1 --bind 127.0.0.1:5055 --timeout 120 wsgi:application
+gunicorn --workers 1 --threads 4 --bind 127.0.0.1:5055 --timeout 120 wsgi:application
 ```
 
 A systemd service file:
@@ -244,7 +246,7 @@ Type=simple
 User=meshconsole
 WorkingDirectory=/opt/meshconsole
 Environment="PATH=/opt/meshconsole/venv/bin:/usr/bin"
-ExecStart=/opt/meshconsole/venv/bin/gunicorn --workers 1 --threads 1 --bind 127.0.0.1:5055 --timeout 120 wsgi:application
+ExecStart=/opt/meshconsole/venv/bin/gunicorn --workers 1 --threads 4 --bind 127.0.0.1:5055 --timeout 120 wsgi:application
 Restart=always
 RestartSec=5
 
@@ -252,7 +254,7 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
-**Important:** Use `--workers 1` since each worker maintains its own device connection.
+**Important:** Use `--workers 1` since each worker maintains its own device connection. Use `--threads 4` to handle concurrent requests without blocking.
 
 ## Files
 
