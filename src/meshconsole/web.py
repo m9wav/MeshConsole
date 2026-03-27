@@ -31,6 +31,22 @@ logger = logging.getLogger(__name__)
 DEFAULT_CONFIG_FILE = 'config.ini'
 
 
+class _ResponseCache:
+    """Simple TTL cache for expensive endpoint responses."""
+
+    def __init__(self):
+        self._store = {}  # key -> (timestamp, response_json)
+
+    def get(self, key, ttl):
+        entry = self._store.get(key)
+        if entry and (time.time() - entry[0]) < ttl:
+            return entry[1]
+        return None
+
+    def set(self, key, value):
+        self._store[key] = (time.time(), value)
+
+
 # ── Authentication helpers ────────────────────────────────────────
 
 def hash_password(password):
@@ -103,6 +119,7 @@ def create_app(orchestrator):
         })
 
     require_auth = _make_require_auth(config)
+    _cache = _ResponseCache()
 
     # ── Routes ────────────────────────────────────────────────
 
@@ -666,6 +683,10 @@ def create_app(orchestrator):
     def network_map_data():
         """Return all nodes with their last known coordinates for the map."""
         try:
+            cached = _cache.get('network-map-data', ttl=30)
+            if cached:
+                return Response(cached, mimetype='application/json')
+
             nodes_with_coords = []
             seen_ids = set()
 
@@ -762,7 +783,9 @@ def create_app(orchestrator):
                         'is_local': True,
                     })
 
-            return jsonify({'nodes': nodes_with_coords})
+            resp_json = json.dumps({'nodes': nodes_with_coords}, default=orchestrator._json_serializer)
+            _cache.set('network-map-data', resp_json)
+            return Response(resp_json, mimetype='application/json')
         except Exception as e:
             logger.error(f"Error fetching network map data: {e}")
             return jsonify({'nodes': [], 'error': str(e)}), 500
@@ -775,10 +798,18 @@ def create_app(orchestrator):
             min_count = int(request.args.get('min_count', 2))
             device_ids = request.args.get('device_ids', '')
             device_id_list = [d.strip() for d in device_ids.split(',') if d.strip()] if device_ids else None
+
+            cache_key = f"graph:{max_nodes}:{min_count}:{device_ids}"
+            cached = _cache.get(cache_key, ttl=30)
+            if cached:
+                return Response(cached, mimetype='application/json')
+
             graph_data = orchestrator.get_mesh_graph_data(
                 max_nodes=max_nodes, min_count=min_count, device_ids=device_id_list
             )
-            return jsonify(graph_data)
+            resp_json = json.dumps(graph_data, default=orchestrator._json_serializer)
+            _cache.set(cache_key, resp_json)
+            return Response(resp_json, mimetype='application/json')
         except Exception as e:
             logger.error(f"Error fetching mesh graph data: {e}")
             return jsonify({'error': str(e), 'nodes': [], 'links': []}), 500
@@ -787,6 +818,12 @@ def create_app(orchestrator):
     def get_stats():
         try:
             backend_filter = request.args.get('backend', None)
+
+            cache_key = f"stats:{backend_filter or ''}"
+            cached = _cache.get(cache_key, ttl=15)
+            if cached:
+                return Response(cached, mimetype='application/json')
+
             packet_count, node_count, port_usage = orchestrator.db_handler.fetch_packet_stats(backend=backend_filter)
             hours, hourly_packets, hourly_messages = orchestrator.db_handler.fetch_hourly_stats(backend=backend_filter)
 
@@ -806,7 +843,7 @@ def create_app(orchestrator):
 
             port_usage_dict = {port: count for port, count in port_usage}
 
-            return jsonify({
+            resp_data = {
                 'totalPackets': packet_count,
                 'totalNodes': node_count,
                 'messagesToday': messages_today,
@@ -816,7 +853,10 @@ def create_app(orchestrator):
                     'packets': hourly_packets,
                     'messages': hourly_messages
                 }
-            })
+            }
+            resp_json = json.dumps(resp_data)
+            _cache.set(cache_key, resp_json)
+            return Response(resp_json, mimetype='application/json')
         except Exception as e:
             logger.error(f"Error fetching stats via API: {e}")
             return jsonify({'error': str(e)}), 500

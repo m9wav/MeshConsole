@@ -689,6 +689,7 @@ class MeshtasticTool:
         self.route_analyzer = RouteAnalyzer(self.db_handler)
         self._nodeinfo_cache = None   # (timestamp, rows) tuple for decode_route
         self._nodeinfo_cache_ttl = 10  # seconds
+        self._nodeinfo_parsed_cache = None  # (timestamp, [{key, name}]) parsed NODEINFO entries
         self.traceroute_completed = False
         self.is_traceroute_mode = False
         self.traceroute_results = {}
@@ -1709,6 +1710,46 @@ class MeshtasticTool:
             status_list.append(entry)
         return status_list
 
+    def _get_nodeinfo_entries(self):
+        """Return cached, pre-parsed NODEINFO entries: [{full_key, name}].
+
+        Caches both the raw DB query (avoiding repeated SELECTs) and the
+        parsed JSON (avoiding repeated json.loads on every call).
+        """
+        now = time.time()
+        if self._nodeinfo_parsed_cache and (now - self._nodeinfo_parsed_cache[0]) < self._nodeinfo_cache_ttl:
+            return self._nodeinfo_parsed_cache[1]
+
+        # Get raw rows (may also refresh _nodeinfo_cache)
+        if self._nodeinfo_cache and (now - self._nodeinfo_cache[0]) < self._nodeinfo_cache_ttl:
+            db_rows = self._nodeinfo_cache[1]
+        else:
+            try:
+                with self.db_handler.lock:
+                    self.db_handler.cursor.execute(
+                        "SELECT DISTINCT raw_packet FROM packets "
+                        "WHERE port_name IN ('NODEINFO','NODEINFO_APP') "
+                        "AND backend='meshcore' ORDER BY timestamp DESC"
+                    )
+                    db_rows = self.db_handler.cursor.fetchall()
+                self._nodeinfo_cache = (now, db_rows)
+            except Exception:
+                db_rows = []
+
+        entries = []
+        for (raw_json,) in db_rows:
+            try:
+                raw = json.loads(raw_json) if isinstance(raw_json, str) else raw_json
+                full_key = raw.get('public_key', '') or raw.get('adv_key', '')
+                name = raw.get('adv_name', '')
+                if full_key and name:
+                    entries.append({'full_key': full_key, 'name': name})
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        self._nodeinfo_parsed_cache = (now, entries)
+        return entries
+
     def decode_route(self, path_hex: str, hash_size: int = 1) -> list[dict]:
         """Decode a MeshCore path to a list of hop dicts.
 
@@ -1747,37 +1788,15 @@ class MeshtasticTool:
                         lookup.setdefault(h, []).append(name)
                         seen_keys.add(full_key.lower())
 
-        # Source 2: historical NODEINFO packets (fills gaps) — cached with TTL
-        now = time.time()
-        if self._nodeinfo_cache and (now - self._nodeinfo_cache[0]) < self._nodeinfo_cache_ttl:
-            nodeinfo_rows = self._nodeinfo_cache[1]
-        else:
-            try:
-                with self.db_handler.lock:
-                    self.db_handler.cursor.execute(
-                        "SELECT DISTINCT raw_packet FROM packets "
-                        "WHERE port_name IN ('NODEINFO','NODEINFO_APP') "
-                        "AND backend='meshcore' ORDER BY timestamp DESC"
-                    )
-                    nodeinfo_rows = self.db_handler.cursor.fetchall()
-                self._nodeinfo_cache = (now, nodeinfo_rows)
-            except Exception:
-                nodeinfo_rows = []
-
-        for (raw_json,) in nodeinfo_rows:
-            try:
-                raw = json.loads(raw_json) if isinstance(raw_json, str) else raw_json
-                full_key = raw.get('public_key', '') or raw.get('adv_key', '')
-                if not full_key or full_key.lower() in seen_keys:
-                    continue
-                if len(full_key) >= hash_size * 2:
-                    h = full_key[:hash_size * 2].lower()
-                    name = raw.get('adv_name', '')
-                    if name:
-                        lookup.setdefault(h, []).append(name)
-                        seen_keys.add(full_key.lower())
-            except (json.JSONDecodeError, TypeError):
-                pass
+        # Source 2: historical NODEINFO packets (fills gaps) — pre-parsed cache
+        for entry in self._get_nodeinfo_entries():
+            full_key = entry['full_key']
+            if full_key.lower() in seen_keys:
+                continue
+            if len(full_key) >= hash_size * 2:
+                h = full_key[:hash_size * 2].lower()
+                lookup.setdefault(h, []).append(entry['name'])
+                seen_keys.add(full_key.lower())
 
         # Phase 1: basic hash lookup
         step = hash_size * 2
@@ -1888,38 +1907,16 @@ class MeshtasticTool:
                         hash_to_pubkeys.setdefault(h, []).append(full_key[:12])
                         seen_keys.add(full_key.lower())
 
-        # Source 2: historical NODEINFO packets (fills gaps after restart) — cached
-        now = time.time()
-        if self._nodeinfo_cache and (now - self._nodeinfo_cache[0]) < self._nodeinfo_cache_ttl:
-            db_rows = self._nodeinfo_cache[1]
-        else:
-            try:
-                with self.db_handler.lock:
-                    self.db_handler.cursor.execute(
-                        "SELECT DISTINCT raw_packet FROM packets "
-                        "WHERE port_name IN ('NODEINFO','NODEINFO_APP') "
-                        "AND backend='meshcore' ORDER BY timestamp DESC"
-                    )
-                    db_rows = self.db_handler.cursor.fetchall()
-                self._nodeinfo_cache = (now, db_rows)
-            except Exception:
-                db_rows = []
-
-        for (raw_json,) in db_rows:
-            try:
-                raw = json.loads(raw_json) if isinstance(raw_json, str) else raw_json
-                full_key = raw.get('public_key', '') or raw.get('adv_key', '')
-                if not full_key or full_key.lower() in seen_keys:
-                    continue
-                if len(full_key) >= 2:
-                    h = full_key[:2].lower()
-                    name = raw.get('adv_name', '')
-                    if name:
-                        hash_to_names.setdefault(h, []).append(name)
-                        hash_to_pubkeys.setdefault(h, []).append(full_key[:12])
-                        seen_keys.add(full_key.lower())
-            except (json.JSONDecodeError, TypeError):
-                pass
+        # Source 2: historical NODEINFO packets (fills gaps after restart) — pre-parsed cache
+        for entry in self._get_nodeinfo_entries():
+            full_key = entry['full_key']
+            if full_key.lower() in seen_keys:
+                continue
+            if len(full_key) >= 2:
+                h = full_key[:2].lower()
+                hash_to_names.setdefault(h, []).append(entry['name'])
+                hash_to_pubkeys.setdefault(h, []).append(full_key[:12])
+                seen_keys.add(full_key.lower())
 
         # Build graph from adjacency cache
         # For the graph, expand hash-level adjacency into per-node entries
