@@ -11,10 +11,10 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
     <!-- Leaflet CSS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <!-- Chart.js -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <!-- D3.js for mesh graph visualization -->
-    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <!-- Chart.js (deferred — only needed for Stats tab) -->
+    <script defer src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- D3.js for mesh graph visualization (deferred — only needed for Graph tab) -->
+    <script defer src="https://d3js.org/d3.v7.min.js"></script>
     
     <style>
         :root {
@@ -1433,13 +1433,34 @@
             loadInitialData();
         });
 
+        // Pause all polling when browser tab is hidden, resume when visible
+        document.addEventListener('visibilitychange', function() {
+            if (document.hidden) {
+                if (appState.autoRefreshTimer) {
+                    clearInterval(appState.autoRefreshTimer);
+                    appState.autoRefreshTimer = null;
+                }
+                if (appState.uptimeTimer) {
+                    clearInterval(appState.uptimeTimer);
+                    appState.uptimeTimer = null;
+                }
+            } else {
+                if (appState.autoRefresh && !appState.autoRefreshTimer) {
+                    startAutoRefresh();
+                }
+                if (!appState.uptimeTimer) {
+                    updateUptime();
+                    appState.uptimeTimer = setInterval(updateUptime, 60000);
+                }
+            }
+        });
+
         function initializeApp() {
             // Session time will be fetched from server via updateUptime()
             document.getElementById('session-start').textContent = 'Loading...';
-            
-            // Initialize charts
-            initializeCharts();
-            
+
+            // Charts are lazy-initialized on first Stats tab visit
+
             // Start auto-refresh (hide manual refresh button since auto is ON by default)
             startAutoRefresh();
             document.getElementById('refresh-packets').style.display = 'none';
@@ -1641,7 +1662,7 @@
                 updateSystemInfo();
                 loadChannels();
                 startAutoRefresh();
-                setInterval(updateUptime, 60000);
+                appState.uptimeTimer = setInterval(updateUptime, 60000);
             });
         }
 
@@ -1696,7 +1717,11 @@
                     const total = response.total || packets.length;
 
                     // Check if data has actually changed before re-rendering
-                    const dataHash = JSON.stringify(packets);
+                    // Use lightweight hash: count + first/last timestamps
+                    const dataHash = packets.length + ':' +
+                        (packets[0] ? packets[0].timestamp : '') + ':' +
+                        (packets[packets.length - 1] ? packets[packets.length - 1].timestamp : '') + ':' +
+                        (packets[0] ? packets[0].from_id : '');
                     if (appState.lastDataHash !== dataHash) {
                         renderPackets(packets);
                         appState.lastDataHash = dataHash;
@@ -3097,11 +3122,17 @@
             if (appState.backendFilter && !appState.backendFilter.startsWith('device:')) {
                 statsBackend = `?backend=${appState.backendFilter}`;
             }
+            // Lazy-init charts on first Stats visit (Chart.js is deferred)
+            if (!window.activityChart && typeof Chart !== 'undefined') {
+                initializeCharts();
+            }
             fetch(`/stats${statsBackend}`)
                 .then(response => response.json())
                 .then(data => {
                     updateStatsDisplay(data);
-                    updateCharts(data);
+                    if (window.activityChart) {
+                        updateCharts(data);
+                    }
                 })
                 .catch(error => {
                     console.error('Error fetching stats:', error);

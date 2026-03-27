@@ -687,6 +687,8 @@ class MeshtasticTool:
         self.latest_packets_lock = threading.Lock()
         self.db_handler = DatabaseHandler()
         self.route_analyzer = RouteAnalyzer(self.db_handler)
+        self._nodeinfo_cache = None   # (timestamp, rows) tuple for decode_route
+        self._nodeinfo_cache_ttl = 10  # seconds
         self.traceroute_completed = False
         self.is_traceroute_mode = False
         self.traceroute_results = {}
@@ -1607,6 +1609,40 @@ class MeshtasticTool:
         """Public resolve used by web routes."""
         return self._resolve_node_name(node_id)
 
+    def resolve_node_names_bulk(self, node_ids):
+        """Resolve multiple node IDs at once, returning a {id: name} dict.
+
+        Avoids repeated backend iteration by building a single lookup map.
+        """
+        result = {}
+        unique_ids = set(node_ids)
+        if not unique_ids:
+            return result
+
+        # Build combined name map from all backends once
+        name_map = {}
+        for b in self.backends:
+            if b.backend_type == BackendType.MESHCORE:
+                for prefix, contact in getattr(b, '_contacts', {}).items():
+                    mc_id = f"mc:{prefix}"
+                    name = contact.get('adv_name', '') or prefix
+                    if name and name != mc_id:
+                        name_map[mc_id] = name
+            elif b.backend_type == BackendType.MESHTASTIC:
+                if hasattr(b, 'node_name_map'):
+                    for nid, name in b.node_name_map.items():
+                        if name and name != nid:
+                            name_map[nid] = name
+
+        for nid in unique_ids:
+            if nid in name_map:
+                result[nid] = name_map[nid]
+            else:
+                # Fallback to DB lookup only for IDs not in live caches
+                result[nid] = self.db_handler.lookup_node_name(nid)
+
+        return result
+
     @property
     def is_connected(self):
         return any(b.is_connected for b in self.backends)
@@ -1711,19 +1747,24 @@ class MeshtasticTool:
                         lookup.setdefault(h, []).append(name)
                         seen_keys.add(full_key.lower())
 
-        # Source 2: historical NODEINFO packets (fills gaps)
-        try:
-            with self.db_handler.lock:
-                self.db_handler.cursor.execute(
-                    "SELECT DISTINCT raw_packet FROM packets "
-                    "WHERE port_name IN ('NODEINFO','NODEINFO_APP') "
-                    "AND backend='meshcore' ORDER BY timestamp DESC"
-                )
-                db_rows = self.db_handler.cursor.fetchall()
-        except Exception:
-            db_rows = []
+        # Source 2: historical NODEINFO packets (fills gaps) — cached with TTL
+        now = time.time()
+        if self._nodeinfo_cache and (now - self._nodeinfo_cache[0]) < self._nodeinfo_cache_ttl:
+            nodeinfo_rows = self._nodeinfo_cache[1]
+        else:
+            try:
+                with self.db_handler.lock:
+                    self.db_handler.cursor.execute(
+                        "SELECT DISTINCT raw_packet FROM packets "
+                        "WHERE port_name IN ('NODEINFO','NODEINFO_APP') "
+                        "AND backend='meshcore' ORDER BY timestamp DESC"
+                    )
+                    nodeinfo_rows = self.db_handler.cursor.fetchall()
+                self._nodeinfo_cache = (now, nodeinfo_rows)
+            except Exception:
+                nodeinfo_rows = []
 
-        for (raw_json,) in db_rows:
+        for (raw_json,) in nodeinfo_rows:
             try:
                 raw = json.loads(raw_json) if isinstance(raw_json, str) else raw_json
                 full_key = raw.get('public_key', '') or raw.get('adv_key', '')
@@ -1847,17 +1888,22 @@ class MeshtasticTool:
                         hash_to_pubkeys.setdefault(h, []).append(full_key[:12])
                         seen_keys.add(full_key.lower())
 
-        # Source 2: historical NODEINFO packets (fills gaps after restart)
-        try:
-            with self.db_handler.lock:
-                self.db_handler.cursor.execute(
-                    "SELECT DISTINCT raw_packet FROM packets "
-                    "WHERE port_name IN ('NODEINFO','NODEINFO_APP') "
-                    "AND backend='meshcore' ORDER BY timestamp DESC"
-                )
-                db_rows = self.db_handler.cursor.fetchall()
-        except Exception:
-            db_rows = []
+        # Source 2: historical NODEINFO packets (fills gaps after restart) — cached
+        now = time.time()
+        if self._nodeinfo_cache and (now - self._nodeinfo_cache[0]) < self._nodeinfo_cache_ttl:
+            db_rows = self._nodeinfo_cache[1]
+        else:
+            try:
+                with self.db_handler.lock:
+                    self.db_handler.cursor.execute(
+                        "SELECT DISTINCT raw_packet FROM packets "
+                        "WHERE port_name IN ('NODEINFO','NODEINFO_APP') "
+                        "AND backend='meshcore' ORDER BY timestamp DESC"
+                    )
+                    db_rows = self.db_handler.cursor.fetchall()
+                self._nodeinfo_cache = (now, db_rows)
+            except Exception:
+                db_rows = []
 
         for (raw_json,) in db_rows:
             try:
@@ -2028,9 +2074,16 @@ class MeshtasticTool:
                         pair_count = max(1, count // (len(a_nodes) * len(b_nodes)))
                         links.append({'source': a_id, 'target': b_id, 'count': pair_count})
 
-        # Count connections per node
-        for n in nodes:
-            n['connections'] = sum(1 for l in links if l['source'] == n['id'] or l['target'] == n['id'])
+        # Count connections per node using pre-computed dict
+        def _count_connections(nodes, links):
+            counts = {}
+            for l in links:
+                counts[l['source']] = counts.get(l['source'], 0) + 1
+                counts[l['target']] = counts.get(l['target'], 0) + 1
+            for n in nodes:
+                n['connections'] = counts.get(n['id'], 0)
+
+        _count_connections(nodes, links)
 
         # Add local node(s) — connected to their nearest repeaters
         # Build per-device last_hop_counts so devices on different frequencies
@@ -2083,8 +2136,7 @@ class MeshtasticTool:
                                     links.append({'source': local_id, 'target': nid, 'count': count})
 
         # Recount connections
-        for n in nodes:
-            n['connections'] = sum(1 for l in links if l['source'] == n['id'] or l['target'] == n['id'])
+        _count_connections(nodes, links)
 
         total_nodes = len(nodes)
         total_links = len(links)
@@ -2116,8 +2168,7 @@ class MeshtasticTool:
             links = [l for l in links if l['source'] in keep_ids and l['target'] in keep_ids]
 
             # Recount after filtering
-            for n in nodes:
-                n['connections'] = sum(1 for l in links if l['source'] == n['id'] or l['target'] == n['id'])
+            _count_connections(nodes, links)
 
         return {
             'nodes': nodes,

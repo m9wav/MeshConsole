@@ -110,6 +110,12 @@ class DatabaseHandler:
                 self.cursor.execute("ALTER TABLE messages ADD COLUMN backend TEXT DEFAULT 'meshtastic'")
                 self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_messages_backend ON messages(backend)')
                 self.conn.commit()
+
+            # Composite indexes for common query patterns (v3.9.0 perf)
+            # These depend on backend column existing, so they live here after migration
+            self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_packets_port_from_ts ON packets(port_name, from_id, timestamp DESC)')
+            self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_packets_backend_ts ON packets(backend, timestamp DESC)')
+            self.conn.commit()
         except sqlite3.Error as e:
             logger.error(f"Database migration error: {e}")
 

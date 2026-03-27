@@ -182,9 +182,16 @@ def create_app(orchestrator):
                             seen_locations[location_key] = packet
                 packets = list(seen_locations.values())
 
+            # Bulk-resolve node names in one pass instead of per-packet
+            all_ids = set()
             for packet in packets:
-                packet['from_name'] = orchestrator.resolve_node_name(packet.get('from_id', ''))
-                packet['to_name'] = orchestrator.resolve_node_name(packet.get('to_id', ''))
+                all_ids.add(packet.get('from_id', ''))
+                all_ids.add(packet.get('to_id', ''))
+            all_ids.discard('')
+            name_map = orchestrator.resolve_node_names_bulk(all_ids)
+            for packet in packets:
+                packet['from_name'] = name_map.get(packet.get('from_id', ''), packet.get('from_id', ''))
+                packet['to_name'] = name_map.get(packet.get('to_id', ''), packet.get('to_id', ''))
 
             total_packets = len(packets)
             paginated_packets = packets[offset:offset + limit]
@@ -309,6 +316,7 @@ def create_app(orchestrator):
                 rows = orchestrator.db_handler.cursor.fetchall()
 
             nodes_by_id = {}
+            db_names = {}  # fallback names from raw_packet
             for row in rows:
                 try:
                     node_id = row[0]
@@ -316,7 +324,6 @@ def create_app(orchestrator):
                     node_backend = row[3] if len(row) > 3 and row[3] else ('meshcore' if node_id.startswith('mc:') else 'meshtastic')
 
                     if node_backend == 'meshcore':
-                        # MeshCore raw_packet: {adv_name, public_key, ...}
                         db_name = (
                             raw_packet.get('adv_name', '')
                             or raw_packet.get('name', '')
@@ -325,24 +332,33 @@ def create_app(orchestrator):
                         db_short = ''
                         hw_model = ''
                     else:
-                        # Meshtastic raw_packet: {decoded: {user: {longName, ...}}}
                         user = raw_packet.get('decoded', {}).get('user', {})
                         db_name = user.get('longName', node_id)
                         db_short = user.get('shortName', '')
                         hw_model = user.get('hwModel', '')
 
-                    live_name = orchestrator.resolve_node_name(node_id)
-                    live_short = orchestrator.node_short_name_map.get(node_id, '')
+                    db_names[node_id] = db_name
                     nodes_by_id[node_id] = {
                         'id': node_id,
-                        'longName': live_name if live_name and live_name != node_id else db_name,
-                        'shortName': live_short if live_short else db_short,
+                        'longName': db_name,  # will be overridden by live name below
+                        'shortName': db_short,
                         'hwModel': hw_model,
                         'lastSeen': row[2],
                         'backend': node_backend,
                     }
                 except Exception:
                     continue
+
+            # Bulk-resolve live names and short names
+            live_names = orchestrator.resolve_node_names_bulk(list(nodes_by_id.keys()))
+            short_names = orchestrator.node_short_name_map
+            for node_id, node in nodes_by_id.items():
+                live_name = live_names.get(node_id, node_id)
+                if live_name and live_name != node_id:
+                    node['longName'] = live_name
+                live_short = short_names.get(node_id, '')
+                if live_short:
+                    node['shortName'] = live_short
 
             # Also pull live nodes from ALL backend contacts caches
             # (they may not have NODEINFO packets in DB yet)
@@ -468,9 +484,11 @@ def create_app(orchestrator):
         try:
             local_ids = orchestrator.get_local_node_ids()
             conversations = orchestrator.db_handler.fetch_conversations(local_ids)
-            # Resolve node names
+            # Bulk-resolve node names
+            conv_ids = [c['node_id'] for c in conversations]
+            name_map = orchestrator.resolve_node_names_bulk(conv_ids)
             for conv in conversations:
-                conv['node_name'] = orchestrator.resolve_node_name(conv['node_id'])
+                conv['node_name'] = name_map.get(conv['node_id'], conv['node_id'])
             return jsonify({'conversations': conversations})
         except Exception as e:
             logger.error(f"Error fetching conversations: {e}")
@@ -484,12 +502,18 @@ def create_app(orchestrator):
             local_ids = orchestrator.get_local_node_ids()
             limit = int(request.args.get('limit', 50))
             messages = orchestrator.db_handler.fetch_thread(node_id, local_ids, limit)
-            # Resolve names
+            # Bulk-resolve names
+            msg_ids = set()
             for msg in messages:
-                msg['from_name'] = orchestrator.resolve_node_name(msg['from_id'])
-                msg['to_name'] = orchestrator.resolve_node_name(msg['to_id'])
+                msg_ids.add(msg['from_id'])
+                msg_ids.add(msg['to_id'])
+            msg_ids.add(node_id)
+            name_map = orchestrator.resolve_node_names_bulk(msg_ids)
+            for msg in messages:
+                msg['from_name'] = name_map.get(msg['from_id'], msg['from_id'])
+                msg['to_name'] = name_map.get(msg['to_id'], msg['to_id'])
             return jsonify({'messages': messages, 'node_id': node_id,
-                            'node_name': orchestrator.resolve_node_name(node_id)})
+                            'node_name': name_map.get(node_id, node_id)})
         except Exception as e:
             logger.error(f"Error fetching thread: {e}")
             return jsonify({'messages': [], 'error': str(e)}), 500
@@ -678,6 +702,8 @@ def create_app(orchestrator):
                 ''')
                 rows = orchestrator.db_handler.cursor.fetchall()
 
+            # First pass: collect nodes with coordinates and their DB-level names
+            pending_nodes = []
             for row in rows:
                 from_id = row[0]
                 if from_id in seen_ids:
@@ -701,18 +727,28 @@ def create_app(orchestrator):
 
                     if lat and lon and abs(float(lat)) > 0.01:
                         seen_ids.add(from_id)
-                        live_name = orchestrator.resolve_node_name(from_id)
-                        nodes_with_coords.append({
-                            'id': from_id,
-                            'name': live_name if live_name != from_id else name,
-                            'lat': float(lat),
-                            'lon': float(lon),
-                            'backend': pkt_backend,
-                            'last_seen': row[2] or '',
+                        pending_nodes.append({
+                            'id': from_id, 'db_name': name,
+                            'lat': float(lat), 'lon': float(lon),
+                            'backend': pkt_backend, 'last_seen': row[2] or '',
                             'is_local': from_id == orchestrator.local_node_id,
                         })
                 except (json.JSONDecodeError, ValueError, TypeError):
                     continue
+
+            # Bulk-resolve live names for all pending nodes
+            if pending_nodes:
+                live_names = orchestrator.resolve_node_names_bulk([n['id'] for n in pending_nodes])
+                for n in pending_nodes:
+                    live_name = live_names.get(n['id'], n['id'])
+                    nodes_with_coords.append({
+                        'id': n['id'],
+                        'name': live_name if live_name != n['id'] else n['db_name'],
+                        'lat': n['lat'], 'lon': n['lon'],
+                        'backend': n['backend'],
+                        'last_seen': n['last_seen'],
+                        'is_local': n['is_local'],
+                    })
 
             # Add local node if it has coordinates and wasn't found
             for b in getattr(orchestrator, 'backends', []):
@@ -756,15 +792,17 @@ def create_app(orchestrator):
 
             today = datetime.now().date()
             messages_today = 0
+            # Copy list under lock, then process outside to minimize lock hold time
             with orchestrator.latest_packets_lock:
-                for packet in orchestrator.latest_packets:
-                    try:
-                        packet_date = datetime.fromisoformat(packet['timestamp']).date()
-                        if packet_date == today and packet['port_name'] in ('TEXT_MESSAGE_APP', 'TEXT_MESSAGE'):
-                            if not backend_filter or packet.get('backend') == backend_filter:
-                                messages_today += 1
-                    except Exception:
-                        pass
+                packets_snapshot = list(orchestrator.latest_packets)
+            for packet in packets_snapshot:
+                try:
+                    packet_date = datetime.fromisoformat(packet['timestamp']).date()
+                    if packet_date == today and packet['port_name'] in ('TEXT_MESSAGE_APP', 'TEXT_MESSAGE'):
+                        if not backend_filter or packet.get('backend') == backend_filter:
+                            messages_today += 1
+                except Exception:
+                    pass
 
             port_usage_dict = {port: count for port, count in port_usage}
 
