@@ -305,6 +305,11 @@ def create_app(orchestrator):
         try:
             backend_filter = request.args.get('backend', '')
 
+            cache_key = f"nodes:{backend_filter}"
+            cached = _cache.get(cache_key, ttl=15)
+            if cached:
+                return Response(cached, mimetype='application/json')
+
             with orchestrator.db_handler.lock:
                 # Build query with optional backend filter
                 query = '''
@@ -423,7 +428,9 @@ def create_app(orchestrator):
                     continue
                 valid_nodes.append(node)
 
-            return jsonify({'nodes': valid_nodes})
+            resp_json = json.dumps({'nodes': valid_nodes})
+            _cache.set(cache_key, resp_json)
+            return Response(resp_json, mimetype='application/json')
         except Exception as e:
             logger.error(f"Error fetching nodes: {e}")
             return jsonify({'error': str(e)}), 500

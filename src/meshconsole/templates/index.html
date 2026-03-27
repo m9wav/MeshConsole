@@ -1074,6 +1074,11 @@
 
                     <div class="row" id="nodes-container">
                         <!-- Nodes will be loaded here -->
+                        <div class="col-12 text-center py-5" id="nodes-loading">
+                            <i class="bi bi-people" style="font-size:2.5rem;color:var(--primary-color);opacity:0.7;"></i>
+                            <h5 style="margin-top:0.5rem;">Loading network nodes...</h5>
+                            <p class="text-muted" style="font-size:0.85rem;">Discovered nodes will appear here.</p>
+                        </div>
                     </div>
                 </div>
 
@@ -1137,6 +1142,11 @@
                 <div class="tab-pane fade" id="network-map" role="tabpanel">
                     <div class="network-map-wrapper" style="position:relative;">
                         <div id="network-map-container" style="height:calc(100vh - 160px);min-height:500px;border-radius:12px;overflow:hidden;background:#1a1a2e;"></div>
+                        <div id="network-map-loading" style="position:absolute;top:0;left:0;right:0;bottom:0;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:999;pointer-events:none;">
+                            <i class="bi bi-geo-alt" style="font-size:2.5rem;color:var(--primary-color);opacity:0.7;"></i>
+                            <h5 style="color:var(--text-color);margin-top:0.5rem;">Loading mesh map...</h5>
+                            <p style="color:var(--secondary-color);font-size:0.85rem;">Node locations will appear here once position data is available.</p>
+                        </div>
                         <div id="network-map-controls" style="position:absolute;top:12px;right:12px;z-index:1000;display:flex;flex-direction:column;gap:6px;">
                             <button class="btn btn-sm btn-light shadow-sm" onclick="networkMapHome()" title="Jump to Home Node"><i class="bi bi-house"></i></button>
                             <button class="btn btn-sm btn-light shadow-sm" onclick="networkMapFitAll()" title="Fit All Nodes"><i class="bi bi-arrows-fullscreen"></i></button>
@@ -1598,7 +1608,7 @@
                 });
             }
 
-            // Tab switching — activate on show, teardown on hide to save RAM
+            // Tab switching — keep map/graph alive to avoid slow rebuilds
             document.querySelectorAll('[data-bs-toggle="tab"]').forEach(tab => {
                 tab.addEventListener('shown.bs.tab', function(e) {
                     const target = e.target.getAttribute('data-bs-target');
@@ -1615,9 +1625,18 @@
                     } else if (target === '#mesh-graph') {
                         if (!appState.meshGraphLoaded) {
                             fetchMeshGraph();
+                        } else if (meshGraphState.simulation) {
+                            // Re-warm simulation briefly so layout looks alive
+                            meshGraphState.simulation.alpha(0.1).restart();
+                            setTimeout(() => { if (meshGraphState.simulation) meshGraphState.simulation.stop(); }, 1000);
                         }
                     } else if (target === '#network-map') {
-                        initNetworkMap();
+                        if (networkMapState.initialized && networkMapState.map) {
+                            // Already built — just fix sizing
+                            networkMapState.map.invalidateSize();
+                        } else {
+                            initNetworkMap();
+                        }
                     } else if (target === '#flood') {
                         loadFloodDevices();
                     }
@@ -1629,11 +1648,10 @@
                         appState.autoRefreshTimer = null;
                     } else if (target === '#messages') {
                         stopThreadPoll();
-                    } else if (target === '#network-map') {
-                        teardownNetworkMap();
-                    } else if (target === '#mesh-graph') {
-                        teardownMeshGraph();
                     }
+                    // Map and graph are NO LONGER torn down on tab switch —
+                    // they persist in the DOM for instant tab switching.
+                    // The D3 simulation is stopped when not visible (alpha decays naturally).
                 });
             });
 
@@ -2509,6 +2527,9 @@
 
         function renderNodes(nodes, append) {
             const container = document.getElementById('nodes-container');
+            // Remove loading placeholder
+            const loadingEl = document.getElementById('nodes-loading');
+            if (loadingEl) loadingEl.remove();
             if (!append) container.innerHTML = '';
 
             if (nodes.length === 0 && !append) {
@@ -4051,7 +4072,14 @@
                         networkMapState.map.addLayer(networkMapState.trunkLayer);
                     }
                 }
-            }).catch(err => console.error('Network map error:', err));
+                // Hide loading overlay once data is rendered
+                const loadingEl = document.getElementById('network-map-loading');
+                if (loadingEl) loadingEl.style.display = 'none';
+            }).catch(err => {
+                console.error('Network map error:', err);
+                const loadingEl = document.getElementById('network-map-loading');
+                if (loadingEl) loadingEl.style.display = 'none';
+            });
         }
 
         function _buildMarker(node) {
@@ -4342,6 +4370,9 @@
             networkMapState.data = null;
             networkMapState.graphData = null;
             networkMapState.initialized = false;
+            // Show loading overlay again for next visit
+            const loadingEl = document.getElementById('network-map-loading');
+            if (loadingEl) loadingEl.style.display = '';
         }
 
         function networkMapToggleTheme() {
