@@ -1075,9 +1075,8 @@
                     <div class="row" id="nodes-container">
                         <!-- Nodes will be loaded here -->
                         <div class="col-12 text-center py-5" id="nodes-loading">
-                            <i class="bi bi-people" style="font-size:2.5rem;color:var(--primary-color);opacity:0.7;"></i>
-                            <h5 style="margin-top:0.5rem;">Loading network nodes...</h5>
-                            <p class="text-muted" style="font-size:0.85rem;">Discovered nodes will appear here.</p>
+                            <div class="spinner-border text-primary mb-2" role="status" style="width:2rem;height:2rem;"></div>
+                            <div style="font-size:0.9rem;">Loading nodes...</div>
                         </div>
                     </div>
                 </div>
@@ -1098,9 +1097,13 @@
                     <div id="graph-device-filters" class="mb-2" style="display:none;"></div>
                     <div class="mesh-graph-container" id="mesh-graph-container">
                         <!-- SVG and controls injected by JS -->
-                        <div class="mesh-graph-empty" id="mesh-graph-empty">
-                            <i class="bi bi-diagram-2"></i>
+                        <div class="mesh-graph-empty" id="mesh-graph-loading">
+                            <div class="spinner-border text-primary mb-3" role="status" style="width:2rem;height:2rem;"></div>
                             <h5>Loading mesh topology...</h5>
+                        </div>
+                        <div class="mesh-graph-empty" id="mesh-graph-empty" style="display:none;">
+                            <i class="bi bi-diagram-2"></i>
+                            <h5>No route data yet</h5>
                             <p>Graph data will appear here once route observations are collected.</p>
                         </div>
                         <div class="mesh-graph-controls" id="mesh-graph-controls" style="display:none;">
@@ -1143,9 +1146,8 @@
                     <div class="network-map-wrapper" style="position:relative;">
                         <div id="network-map-container" style="height:calc(100vh - 160px);min-height:500px;border-radius:12px;overflow:hidden;background:#1a1a2e;"></div>
                         <div id="network-map-loading" style="position:absolute;top:0;left:0;right:0;bottom:0;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:999;pointer-events:none;">
-                            <i class="bi bi-geo-alt" style="font-size:2.5rem;color:var(--primary-color);opacity:0.7;"></i>
-                            <h5 style="color:var(--text-color);margin-top:0.5rem;">Loading mesh map...</h5>
-                            <p style="color:var(--secondary-color);font-size:0.85rem;">Node locations will appear here once position data is available.</p>
+                            <div class="spinner-border text-primary mb-2" role="status" style="width:2rem;height:2rem;"></div>
+                            <span style="color:var(--text-color);font-size:0.9rem;">Loading map data...</span>
                         </div>
                         <div id="network-map-controls" style="position:absolute;top:12px;right:12px;z-index:1000;display:flex;flex-direction:column;gap:6px;">
                             <button class="btn btn-sm btn-light shadow-sm" onclick="networkMapHome()" title="Jump to Home Node"><i class="bi bi-house"></i></button>
@@ -1681,6 +1683,9 @@
                 loadChannels();
                 startAutoRefresh();
                 appState.uptimeTimer = setInterval(updateUptime, 60000);
+                // Prefetch map data so Mesh Map tab opens instantly
+                networkMapState.prefetchMap = fetch('/network-map-data').then(r => r.json()).catch(() => null);
+                networkMapState.prefetchGraph = fetch('/mesh-graph?max_nodes=80&min_count=2').then(r => r.json()).catch(() => ({nodes:[], links:[]}));
             });
         }
 
@@ -4020,6 +4025,7 @@
             const map = L.map(container, {
                 zoomControl: false,
                 attributionControl: true,
+                preferCanvas: true,
             }).setView([52.0, -2.0], 6);
 
             networkMapState.darkTheme = document.body.classList.contains('theme-dark');
@@ -4058,23 +4064,34 @@
         }
 
         function loadNetworkMapData() {
-            Promise.all([
-                fetch('/network-map-data').then(r => r.json()),
-                fetch('/mesh-graph?max_nodes=0&min_count=5').then(r => r.json()).catch(() => ({nodes:[], links:[]})),
-            ]).then(([mapData, graphData]) => {
+            // Use prefetched data if available (fired during page load),
+            // otherwise fetch fresh
+            const mapPromise = networkMapState.prefetchMap || fetch('/network-map-data').then(r => r.json());
+            const graphPromise = networkMapState.prefetchGraph || fetch('/mesh-graph?max_nodes=80&min_count=2').then(r => r.json()).catch(() => ({nodes:[], links:[]}));
+            // Clear prefetch refs so refresh fetches fresh
+            networkMapState.prefetchMap = null;
+            networkMapState.prefetchGraph = null;
+
+            Promise.all([mapPromise, graphPromise]).then(([mapData, graphData]) => {
+                if (!mapData) mapData = {nodes: []};
                 networkMapState.data = mapData;
                 networkMapState.graphData = graphData;
-                renderNetworkMapNodes(mapData.nodes || []);
-                if (networkMapState.trunksVisible) {
-                    renderTrunkLines(mapData.nodes || [], graphData);
-                    if (networkMapState.map && networkMapState.trunkLayer &&
-                        !networkMapState.map.hasLayer(networkMapState.trunkLayer)) {
-                        networkMapState.map.addLayer(networkMapState.trunkLayer);
-                    }
-                }
-                // Hide loading overlay once data is rendered
+
+                // Hide overlay BEFORE rendering so browser repaints immediately
                 const loadingEl = document.getElementById('network-map-loading');
                 if (loadingEl) loadingEl.style.display = 'none';
+
+                // Defer rendering to next frame so the overlay removal paints first
+                requestAnimationFrame(() => {
+                    renderNetworkMapNodes(mapData.nodes || []);
+                    if (networkMapState.trunksVisible) {
+                        renderTrunkLines(mapData.nodes || [], graphData);
+                        if (networkMapState.map && networkMapState.trunkLayer &&
+                            !networkMapState.map.hasLayer(networkMapState.trunkLayer)) {
+                            networkMapState.map.addLayer(networkMapState.trunkLayer);
+                        }
+                    }
+                });
             }).catch(err => {
                 console.error('Network map error:', err);
                 const loadingEl = document.getElementById('network-map-loading');
@@ -4092,7 +4109,7 @@
                 bubblingMouseEvents: false,
             });
             marker._nodeData = node;
-            const lastSeen = node.last_seen ? new Date(node.last_seen).toLocaleString() : '';
+            const lastSeen = node._lastSeenStr || (node.last_seen ? new Date(node.last_seen).toLocaleString() : '');
             const tipHtml = `<strong>${node.name}</strong>${node.is_local ? ' (you)' : ''}<br><span style="opacity:0.7">${node.backend} · ${lastSeen}</span>`;
             marker.on('mouseover', function() {
                 const tip = document.getElementById('network-map-tip');
@@ -4125,12 +4142,13 @@
 
             const nodesWithCoords = nodes.filter(n => n.lat && n.lon);
 
-            // Sort by recency
-            nodesWithCoords.sort((a, b) => {
-                const ta = a.last_seen ? new Date(a.last_seen).getTime() : 0;
-                const tb = b.last_seen ? new Date(b.last_seen).getTime() : 0;
-                return tb - ta;
+            // Pre-compute sort keys and tooltip strings to avoid repeated
+            // Date parsing inside sort comparator and marker builder
+            nodesWithCoords.forEach(n => {
+                n._ts = n.last_seen ? new Date(n.last_seen).getTime() : 0;
+                n._lastSeenStr = n._ts ? new Date(n._ts).toLocaleString() : '';
             });
+            nodesWithCoords.sort((a, b) => b._ts - a._ts);
 
             networkMapState.allNodes = nodesWithCoords;
             // Core set: top 50 most recent — always shown regardless of viewport
@@ -4150,15 +4168,29 @@
                 if (trunkNames.has(n.name)) networkMapState.coreIds.add(n.id);
             });
 
-            // Add initial core nodes
+            // Stream nodes onto the map in batches for progressive rendering
             const coreNodes = nodesWithCoords.filter(n => networkMapState.coreIds.has(n.id));
-            coreNodes.forEach(node => {
-                const marker = _buildMarker(node);
-                networkMapState.markers[node.id] = marker;
-                networkMapState.markerGroup.addLayer(marker);
-            });
-
-            _updateMapStats();
+            const BATCH_SIZE = 25;
+            let batchIdx = 0;
+            function addBatch() {
+                const start = batchIdx * BATCH_SIZE;
+                const batch = coreNodes.slice(start, start + BATCH_SIZE);
+                if (batch.length === 0) return;
+                batch.forEach(node => {
+                    const marker = _buildMarker(node);
+                    networkMapState.markers[node.id] = marker;
+                    networkMapState.markerGroup.addLayer(marker);
+                });
+                _updateMapStats();
+                batchIdx++;
+                if (start + BATCH_SIZE < coreNodes.length) {
+                    requestAnimationFrame(addBatch);
+                } else {
+                    // All core nodes added, trigger viewport-based loading
+                    setTimeout(_dynamicNodeUpdate, 300);
+                }
+            }
+            addBatch();
 
             // Smart centering: interquartile to ignore outliers
             if (nodesWithCoords.length > 4) {
@@ -4175,8 +4207,6 @@
                 map.fitBounds(bounds, {padding: [40, 40], maxZoom: 10});
             }
 
-            // Trigger dynamic update after initial fitBounds settles
-            setTimeout(_dynamicNodeUpdate, 600);
         }
 
         function _dynamicNodeUpdate() {
@@ -4832,6 +4862,12 @@
 
         function fetchMeshGraph() {
             populateGraphDeviceFilters();
+            // Show loading spinner
+            const loadingEl = document.getElementById('mesh-graph-loading');
+            const emptyEl = document.getElementById('mesh-graph-empty');
+            if (loadingEl) loadingEl.style.display = '';
+            if (emptyEl) emptyEl.style.display = 'none';
+
             const maxNodes = meshGraphState.maxNodes || 80;
             let url = `/mesh-graph?max_nodes=${maxNodes}`;
             if (meshGraphState.selectedDevices && meshGraphState.selectedDevices.length > 0) {
@@ -4840,27 +4876,35 @@
             fetch(url)
                 .then(r => r.json())
                 .then(data => {
+                    if (loadingEl) loadingEl.style.display = 'none';
                     appState.meshGraphLoaded = true;
                     meshGraphState.data = data;
                     renderMeshGraph(data);
                 })
                 .catch(err => {
                     console.error('Error fetching mesh graph:', err);
-                    document.getElementById('mesh-graph-empty').innerHTML = `
-                        <i class="bi bi-exclamation-triangle"></i>
-                        <h5>Failed to load graph data</h5>
-                        <p>Make sure MeshCore routes have been observed.</p>
-                    `;
+                    if (loadingEl) loadingEl.style.display = 'none';
+                    if (emptyEl) {
+                        emptyEl.style.display = '';
+                        emptyEl.innerHTML = `
+                            <i class="bi bi-exclamation-triangle"></i>
+                            <h5>Failed to load graph data</h5>
+                            <p>Check your connection and try again.</p>
+                        `;
+                    }
                 });
         }
 
         function renderMeshGraph(data) {
             const container = document.getElementById('mesh-graph-container');
+            const loadingEl = document.getElementById('mesh-graph-loading');
             const emptyEl = document.getElementById('mesh-graph-empty');
             const controlsEl = document.getElementById('mesh-graph-controls');
             const legendEl = document.getElementById('mesh-graph-legend');
             const statsEl = document.getElementById('mesh-graph-stats');
             const tooltip = document.getElementById('mesh-graph-tooltip');
+
+            if (loadingEl) loadingEl.style.display = 'none';
 
             if (!data.nodes || data.nodes.length === 0) {
                 emptyEl.style.display = '';

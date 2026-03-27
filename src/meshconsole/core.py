@@ -360,6 +360,14 @@ class RouteAnalyzer:
         # {(node_hash, neighbor_hash): {candidate_name: count}}
         self._cache: dict[tuple[str, str], dict[str, int]] = {}
 
+        # Secondary index: hash -> set of neighbor hashes (O(1) neighbor lookup)
+        self._hash_neighbors: dict[str, set[str]] = {}
+
+        # Pre-materialized graph data (rebuilt incrementally)
+        self._graph_edge_counts: dict[tuple[str, str], int] = {}
+        self._graph_node_hashes: set[str] = set()
+        self._graph_generation: int = 0
+
         # Pending writes waiting to be flushed to SQLite
         self._pending: list[tuple[str, str, str, str]] = []
 
@@ -377,8 +385,34 @@ class RouteAnalyzer:
             if key not in self._cache:
                 self._cache[key] = {}
             self._cache[key][candidate] = count
+            # Secondary index
+            self._hash_neighbors.setdefault(node_hash, set()).add(neighbor_hash)
+        # Materialize graph edge counts
+        self._rebuild_graph_materialization()
         if rows:
             logger.info(f"RouteAnalyzer: loaded {len(rows)} adjacency records")
+
+    def _rebuild_graph_materialization(self) -> None:
+        """Rebuild pre-computed graph edge counts from the adjacency cache."""
+        edge_counts: dict[tuple[str, str], int] = {}
+        node_hashes: set[str] = set()
+        for (node_hash, neighbor_hash), candidates in self._cache.items():
+            total = sum(candidates.values())
+            if total < 2:
+                continue
+            edge_key = tuple(sorted([node_hash, neighbor_hash]))
+            edge_counts[edge_key] = edge_counts.get(edge_key, 0) + total
+            node_hashes.add(node_hash)
+            node_hashes.add(neighbor_hash)
+        # Filter weak edges
+        edge_counts = {k: v for k, v in edge_counts.items() if v >= 2}
+        node_hashes = set()
+        for a, b in edge_counts:
+            node_hashes.add(a)
+            node_hashes.add(b)
+        self._graph_edge_counts = edge_counts
+        self._graph_node_hashes = node_hashes
+        self._graph_generation += 1
 
     def learn_route(self, hops: list[dict]) -> None:
         """Learn adjacency patterns from a decoded route.
@@ -444,12 +478,21 @@ class RouteAnalyzer:
             return
 
         with self._lock:
-            # Update in-memory cache immediately
+            # Update in-memory cache + secondary index
             for node_hash, neighbor_hash, candidate, _ts in new_observations:
                 key = (node_hash, neighbor_hash)
                 if key not in self._cache:
                     self._cache[key] = {}
                 self._cache[key][candidate] = self._cache[key].get(candidate, 0) + 1
+                self._hash_neighbors.setdefault(node_hash, set()).add(neighbor_hash)
+
+                # Incrementally update materialized edge counts
+                edge_key = tuple(sorted([node_hash, neighbor_hash]))
+                self._graph_edge_counts[edge_key] = self._graph_edge_counts.get(edge_key, 0) + 1
+                self._graph_node_hashes.add(node_hash)
+                self._graph_node_hashes.add(neighbor_hash)
+
+            self._graph_generation += 1
 
             # Buffer for batch DB write
             self._pending.extend(new_observations)
@@ -1918,27 +1961,10 @@ class MeshtasticTool:
                 hash_to_pubkeys.setdefault(h, []).append(full_key[:12])
                 seen_keys.add(full_key.lower())
 
-        # Build graph from adjacency cache
-        # For the graph, expand hash-level adjacency into per-node entries
-        # using the RouteAnalyzer's learned candidate scores
-        edge_counts: dict[tuple[str, str], int] = {}
-        node_hashes: set[str] = set()
-
+        # Use pre-materialized graph data (maintained incrementally by learn_route)
         with analyzer._lock:
-            for (node_hash, neighbor_hash), candidates in analyzer._cache.items():
-                total_count = sum(candidates.values())
-                if total_count < 2:
-                    continue
-                edge_key = tuple(sorted([node_hash, neighbor_hash]))
-                edge_counts[edge_key] = edge_counts.get(edge_key, 0) + total_count
-                node_hashes.add(node_hash)
-                node_hashes.add(neighbor_hash)
-
-        edge_counts = {k: v for k, v in edge_counts.items() if v >= 2}
-        node_hashes = set()
-        for (a, b) in edge_counts:
-            node_hashes.add(a)
-            node_hashes.add(b)
+            edge_counts = dict(analyzer._graph_edge_counts)
+            node_hashes = set(analyzer._graph_node_hashes)
 
         # Expand hashes into individual nodes using pubkey prefixes
         # Each real node gets its own graph entry with a unique ID (pubkey prefix)
@@ -2012,33 +2038,55 @@ class MeshtasticTool:
         # Build nid->name lookup for _pick_representatives
         nid_to_name = {n['id']: n['name'] for n in nodes}
 
-        def _pick_representatives(nids):
+        def _pick_representatives(nids, near_coords=None):
             """From a set of node IDs sharing a hash, return the best
             candidate to receive edges.  Uses confidence first, then
-            geo proximity to resolved neighbors as tiebreaker."""
+            geo proximity as tiebreaker.
+
+            Args:
+                nids: list of candidate node IDs
+                near_coords: optional (lat, lon) reference point — when set,
+                    geography is the PRIMARY signal (overrides confidence),
+                    because we know exactly where the local node is.
+            """
             if len(nids) <= 1:
                 return nids
+
+            # When we have a known reference point (local node), geography
+            # is the best signal — a 0.7 confidence node 500km away is less
+            # likely our neighbor than a 0.3 confidence node 5km away.
+            if near_coords and analyzer._geo.coord_count > 0:
+                best_nid = None
+                best_dist = float('inf')
+                for nid in nids:
+                    name = nid_to_name.get(nid, '')
+                    c = analyzer._geo.get_coords(name)
+                    if not c:
+                        continue
+                    d = analyzer._geo._haversine(near_coords[0], near_coords[1], c[0], c[1])
+                    if d < best_dist:
+                        best_dist = d
+                        best_nid = nid
+                if best_nid:
+                    return [best_nid]
+
+            # No reference point — use confidence, then neighbor-geo tiebreak
             high = [nid for nid in nids if node_conf.get(nid, 0) >= 0.7]
             if high:
                 return high
-            # Tiebreak: find resolved unique neighbors of this hash,
-            # pick the candidate geographically closest to them
+
+            # Tiebreak: pick candidate geographically closest to resolved neighbors
             sample_hash = next((n['hash'] for n in nodes if n['id'] == nids[0]), None)
             if sample_hash and analyzer._geo.coord_count > 0:
-                # Collect coords of unique neighbors
                 nbr_coords = []
-                with analyzer._lock:
-                    seen_nbr = set()
-                    for (nh, nbr), _ in analyzer._cache.items():
-                        if nh == sample_hash and nbr not in seen_nbr:
-                            seen_nbr.add(nbr)
-                            nbr_names = hash_to_names.get(nbr, [])
-                            if len(nbr_names) == 1:
-                                c = analyzer._geo.get_coords(nbr_names[0])
-                                if c:
-                                    nbr_coords.append(c)
+                # Use secondary index for O(K) neighbor lookup instead of full cache scan
+                for nbr in analyzer._hash_neighbors.get(sample_hash, set()):
+                    nbr_names = hash_to_names.get(nbr, [])
+                    if len(nbr_names) == 1:
+                        c = analyzer._geo.get_coords(nbr_names[0])
+                        if c:
+                            nbr_coords.append(c)
                 if nbr_coords:
-                    # Score each candidate by avg distance to unique neighbors
                     best_nid = None
                     best_dist = float('inf')
                     for nid in nids:
@@ -2046,30 +2094,67 @@ class MeshtasticTool:
                         c = analyzer._geo.get_coords(name)
                         if not c:
                             continue
-                        avg = sum(analyzer._geo._haversine(c[0], c[1], nc[0], nc[1]) for nc in nbr_coords) / len(nbr_coords)
+                        avg = sum(analyzer._geo._haversine(c[0], c[1], nc[0], nc[1])
+                                  for nc in nbr_coords) / len(nbr_coords)
                         if avg < best_dist:
                             best_dist = avg
                             best_nid = nid
                     if best_nid:
                         return [best_nid]
-            # Fallback: highest confidence
             best = max(nids, key=lambda nid: node_conf.get(nid, 0))
             return [best]
 
+        # Build links using candidate-level adjacency scores instead of raw
+        # hash-level edges.  For each hash pair (a, b), the RouteAnalyzer's
+        # cache has per-candidate observation counts.  We use the winning
+        # candidate for each side (the one with the most observations for
+        # this specific neighbor hash) to build accurate node-to-node edges.
         links = []
         link_set = set()
+
+        # Targeted candidate lookups: only fetch adjacency scores for edges
+        # we actually need (O(edges) not O(44k full cache))
+        candidate_wins: dict[tuple[str, str], dict[str, int]] = {}
+        with analyzer._lock:
+            for (ha, hb) in edge_counts:
+                key_ab = (ha, hb)
+                key_ba = (hb, ha)
+                if key_ab in analyzer._cache:
+                    candidate_wins[key_ab] = dict(analyzer._cache[key_ab])
+                if key_ba in analyzer._cache:
+                    candidate_wins[key_ba] = dict(analyzer._cache[key_ba])
+
+        # Reverse map: candidate name -> node ID (pubkey prefix) in the graph
+        name_to_nid: dict[str, str] = {}
+        for n in nodes:
+            if n['name'] and n['name'] != n['id']:
+                name_to_nid[n['name']] = n['id']
+
         for (ha, hb), count in sorted(edge_counts.items(), key=lambda x: -x[1]):
-            a_nodes = _pick_representatives(hash_to_node_ids.get(ha, []))
-            b_nodes = _pick_representatives(hash_to_node_ids.get(hb, []))
-            for a_id in a_nodes:
-                for b_id in b_nodes:
-                    if a_id == b_id:
-                        continue
-                    link_key = tuple(sorted([a_id, b_id]))
-                    if link_key not in link_set:
-                        link_set.add(link_key)
-                        pair_count = max(1, count // (len(a_nodes) * len(b_nodes)))
-                        links.append({'source': a_id, 'target': b_id, 'count': pair_count})
+            a_candidates = candidate_wins.get((ha, hb), {})
+            b_candidates = candidate_wins.get((hb, ha), {})
+
+            # Pick the top candidate that exists in our graph
+            def _best_candidate(cands, hash_key):
+                for cand_name, cand_cnt in sorted(cands.items(), key=lambda x: -x[1]):
+                    nid = name_to_nid.get(cand_name)
+                    if nid and nid in node_ids:
+                        return nid, cand_cnt
+                # Fallback: use _pick_representatives
+                reps = _pick_representatives(hash_to_node_ids.get(hash_key, []))
+                return (reps[0] if reps else None), count
+
+            a_id, a_cnt = _best_candidate(a_candidates, ha)
+            b_id, b_cnt = _best_candidate(b_candidates, hb)
+
+            if a_id and b_id and a_id != b_id:
+                link_key = tuple(sorted([a_id, b_id]))
+                if link_key not in link_set:
+                    link_set.add(link_key)
+                    # Use the smaller side's count as the edge weight
+                    # (represents the bottleneck of the connection)
+                    edge_count = min(a_cnt, b_cnt) if isinstance(a_cnt, int) and isinstance(b_cnt, int) else count
+                    links.append({'source': a_id, 'target': b_id, 'count': edge_count})
 
         # Count connections per node using pre-computed dict
         def _count_connections(nodes, links):
@@ -2121,16 +2206,131 @@ class MeshtasticTool:
                                 break
 
                     # Connect to nearest repeaters — only from THIS device's packets
+                    # Use local node's coordinates to pick geo-nearest candidate
+                    # from ALL known candidates, not just the filtered graph set.
+                    local_coords = analyzer._geo.get_coords(local_name) if analyzer._geo.coord_count > 0 else None
                     device_hops = per_device_hops.get(backend.device_id, {})
                     top_neighbors = sorted(device_hops.items(), key=lambda x: -x[1])[:5]
                     for neighbor_hash, count in top_neighbors:
-                        rep_ids = _pick_representatives(hash_to_node_ids.get(neighbor_hash, []))
-                        for nid in rep_ids:
-                            if nid != local_id:
-                                lk = tuple(sorted([local_id, nid]))
-                                if lk not in link_set:
-                                    link_set.add(lk)
-                                    links.append({'source': local_id, 'target': nid, 'count': count})
+                        # Build full candidate list from hash_to_pubkeys (not the filtered graph)
+                        full_pks = hash_to_pubkeys.get(neighbor_hash, [])
+                        full_names = hash_to_names.get(neighbor_hash, [])
+
+                        # Pick the geo-nearest candidate to our local node
+                        best_nid = None
+                        best_dist = float('inf')
+                        if local_coords and len(full_pks) > 1:
+                            for i, pk in enumerate(full_pks):
+                                nid = pk.lower()
+                                name = full_names[i] if i < len(full_names) else ''
+                                c = analyzer._geo.get_coords(name)
+                                if c:
+                                    d = analyzer._geo._haversine(
+                                        local_coords[0], local_coords[1], c[0], c[1])
+                                    if d < best_dist:
+                                        best_dist = d
+                                        best_nid = nid
+                        # Skip if nearest GPS candidate is >150km — likely a collision
+                        if best_nid and best_dist > 150:
+                            best_nid = None
+
+                        # Second chance: check non-GPS candidates that are anchored
+                        # as local by strong adjacency to verified-local nodes
+                        if not best_nid and local_coords and len(full_pks) > 1:
+                            # Hashes of nodes confirmed within 150km of local
+                            local_hashes = set()
+                            for l in links:
+                                for lid in (l['source'], l['target']):
+                                    ln = next((n for n in nodes if n['id'] == lid and n.get('is_local')), None)
+                                    if ln:
+                                        local_hashes.add(ln.get('hash', ''))
+                            # Also include hashes of 1st-hop neighbors already accepted
+                            for l in links:
+                                if l['source'] == local_id or l['target'] == local_id:
+                                    nbr = l['target'] if l['source'] == local_id else l['source']
+                                    nbr_n = next((n for n in nodes if n['id'] == nbr), None)
+                                    if nbr_n:
+                                        local_hashes.add(nbr_n.get('hash', ''))
+
+                            for i, pk in enumerate(full_pks):
+                                nid = pk.lower()
+                                name = full_names[i] if i < len(full_names) else ''
+                                # Skip candidates we already checked (have GPS)
+                                if analyzer._geo.get_coords(name):
+                                    continue
+                                # Check if this candidate co-occurs with local hashes
+                                co_count = 0
+                                for lh in local_hashes:
+                                    cands = analyzer._cache.get((neighbor_hash, lh), {})
+                                    co_count += cands.get(name, 0)
+                                if co_count >= 3:
+                                    best_nid = nid
+                                    break
+
+                        if not best_nid and full_pks:
+                            if len(full_pks) == 1:
+                                nid = full_pks[0].lower()
+                                name = full_names[0] if full_names else ''
+                                c = analyzer._geo.get_coords(name) if local_coords else None
+                                if c and analyzer._geo._haversine(
+                                        local_coords[0], local_coords[1], c[0], c[1]) > 150:
+                                    continue
+                                best_nid = nid
+                            elif not local_coords:
+                                graph_nids = hash_to_node_ids.get(neighbor_hash, [])
+                                best_nid = graph_nids[0] if graph_nids else full_pks[0].lower()
+
+                        if best_nid and best_nid != local_id:
+                            # Ensure node exists in graph (add if missing)
+                            if best_nid not in node_ids:
+                                idx = next((i for i, pk in enumerate(full_pks)
+                                            if pk.lower() == best_nid), 0)
+                                name = full_names[idx] if idx < len(full_names) else best_nid
+                                nodes.append({
+                                    'id': best_nid, 'hash': neighbor_hash,
+                                    'name': name, 'confidence': 0.5,
+                                    'candidates': len(full_pks),
+                                    'pubkeys': [best_nid], 'connections': 0,
+                                })
+                                node_ids.add(best_nid)
+                            lk = tuple(sorted([local_id, best_nid]))
+                            if lk not in link_set:
+                                link_set.add(lk)
+                                links.append({'source': local_id, 'target': best_nid, 'count': count})
+
+        # Remove implausible local connections: if a link touches a local
+        # node and the other end is >150km away, it's a hash collision artifact.
+        local_id_set = {n['id'] for n in nodes if n.get('is_local')}
+        if local_id_set and analyzer._geo.coord_count > 0:
+            local_coord_map = {}
+            for n in nodes:
+                if n.get('is_local'):
+                    c = analyzer._geo.get_coords(n['name'])
+                    if c:
+                        local_coord_map[n['id']] = c
+
+            if local_coord_map:
+                filtered_links = []
+                for l in links:
+                    s, t = l['source'], l['target']
+                    drop = False
+                    if s in local_coord_map:
+                        tc = analyzer._geo.get_coords(
+                            next((n['name'] for n in nodes if n['id'] == t), ''))
+                        if tc and analyzer._geo._haversine(
+                                local_coord_map[s][0], local_coord_map[s][1],
+                                tc[0], tc[1]) > 150:
+                            drop = True
+                    elif t in local_coord_map:
+                        sc = analyzer._geo.get_coords(
+                            next((n['name'] for n in nodes if n['id'] == s), ''))
+                        if sc and analyzer._geo._haversine(
+                                local_coord_map[t][0], local_coord_map[t][1],
+                                sc[0], sc[1]) > 150:
+                            drop = True
+                    if not drop:
+                        filtered_links.append(l)
+                links = filtered_links
 
         # Recount connections
         _count_connections(nodes, links)
@@ -2140,15 +2340,31 @@ class MeshtasticTool:
 
         # ── Server-side filtering for performance ──
         if max_nodes > 0 and len(nodes) > max_nodes:
-            # Always keep: local nodes + their direct neighbors
+            # Always keep: local nodes + direct neighbors + their direct
+            # connections (2nd hop) so the path into the main mesh is preserved.
             keep_ids: set[str] = set()
             local_ids = {n['id'] for n in nodes if n.get('is_local')}
             keep_ids.update(local_ids)
+            # 1st hop: direct neighbors of local nodes
+            hop1 = set()
             for l in links:
                 if l['source'] in local_ids:
-                    keep_ids.add(l['target'])
+                    hop1.add(l['target'])
                 if l['target'] in local_ids:
-                    keep_ids.add(l['source'])
+                    hop1.add(l['source'])
+            keep_ids.update(hop1)
+            # 2nd hop: top 3 strongest connections per hop-1 node only
+            # — keeps gateway nodes like Exmouth~West without cascading
+            hop1_nbrs: dict[str, list] = {nid: [] for nid in hop1}
+            for l in links:
+                if l['source'] in hop1 and l['target'] not in keep_ids:
+                    hop1_nbrs[l['source']].append((l['target'], l['count']))
+                if l['target'] in hop1 and l['source'] not in keep_ids:
+                    hop1_nbrs[l['target']].append((l['source'], l['count']))
+            for nid in hop1:
+                top = sorted(hop1_nbrs[nid], key=lambda x: -x[1])[:3]
+                for nbr_id, _ in top:
+                    keep_ids.add(nbr_id)
 
             # Fill remaining slots by importance
             remaining = max_nodes - len(keep_ids)
@@ -2165,6 +2381,41 @@ class MeshtasticTool:
             links = [l for l in links if l['source'] in keep_ids and l['target'] in keep_ids]
 
             # Recount after filtering
+            _count_connections(nodes, links)
+
+        # Cap links for D3 performance: keep top 4 strongest per node, max 300 total.
+        # Always preserve local node links and bridge links to maintain connectivity.
+        if len(links) > 300:
+            local_node_ids = {n['id'] for n in nodes if n.get('is_local')}
+            # Identify links that touch local nodes or their direct neighbors
+            local_nbrs = set()
+            for l in links:
+                if l['source'] in local_node_ids:
+                    local_nbrs.add(l['target'])
+                elif l['target'] in local_node_ids:
+                    local_nbrs.add(l['source'])
+            protected_ids = local_node_ids | local_nbrs
+
+            # Split into protected (always keep) and cappable
+            protected = [l for l in links
+                         if l['source'] in protected_ids or l['target'] in protected_ids]
+            cappable = [l for l in links
+                        if l['source'] not in protected_ids and l['target'] not in protected_ids]
+            cappable.sort(key=lambda l: l['count'], reverse=True)
+
+            budget = 300 - len(protected)
+            kept = []
+            per_node = {}
+            for l in cappable:
+                sc = per_node.get(l['source'], 0)
+                tc = per_node.get(l['target'], 0)
+                if sc < 4 or tc < 4:
+                    kept.append(l)
+                    per_node[l['source']] = sc + 1
+                    per_node[l['target']] = tc + 1
+                    if len(kept) >= budget:
+                        break
+            links = protected + kept
             _count_connections(nodes, links)
 
         return {

@@ -32,19 +32,24 @@ DEFAULT_CONFIG_FILE = 'config.ini'
 
 
 class _ResponseCache:
-    """Simple TTL cache for expensive endpoint responses."""
+    """TTL cache with optional generation-aware invalidation."""
 
     def __init__(self):
-        self._store = {}  # key -> (timestamp, response_json)
+        self._store = {}  # key -> (timestamp, response_json, generation)
 
-    def get(self, key, ttl):
+    def get(self, key, ttl, generation=None):
         entry = self._store.get(key)
-        if entry and (time.time() - entry[0]) < ttl:
+        if not entry:
+            return None
+        # If generation is provided and unchanged, serve regardless of TTL
+        if generation is not None and len(entry) >= 3 and entry[2] == generation:
+            return entry[1]
+        if (time.time() - entry[0]) < ttl:
             return entry[1]
         return None
 
-    def set(self, key, value):
-        self._store[key] = (time.time(), value)
+    def set(self, key, value, generation=None):
+        self._store[key] = (time.time(), value, generation)
 
 
 # ── Authentication helpers ────────────────────────────────────────
@@ -720,13 +725,18 @@ def create_app(orchestrator):
                 except Exception:
                     pass
 
-            # Source 2: position packets from DB (meshtastic + meshcore)
+            # Source 2: most recent position/nodeinfo per node from DB
             with orchestrator.db_handler.lock:
                 orchestrator.db_handler.cursor.execute('''
-                    SELECT from_id, raw_packet, timestamp, backend
-                    FROM packets
-                    WHERE port_name IN ('POSITION_APP', 'NODEINFO', 'NODEINFO_APP')
-                    ORDER BY timestamp DESC
+                    SELECT p.from_id, p.raw_packet, p.timestamp, p.backend
+                    FROM packets p
+                    INNER JOIN (
+                        SELECT from_id, MAX(timestamp) AS max_ts
+                        FROM packets
+                        WHERE port_name IN ('POSITION_APP', 'NODEINFO', 'NODEINFO_APP')
+                        GROUP BY from_id
+                    ) latest ON p.from_id = latest.from_id AND p.timestamp = latest.max_ts
+                    WHERE p.port_name IN ('POSITION_APP', 'NODEINFO', 'NODEINFO_APP')
                 ''')
                 rows = orchestrator.db_handler.cursor.fetchall()
 
@@ -807,7 +817,8 @@ def create_app(orchestrator):
             device_id_list = [d.strip() for d in device_ids.split(',') if d.strip()] if device_ids else None
 
             cache_key = f"graph:{max_nodes}:{min_count}:{device_ids}"
-            cached = _cache.get(cache_key, ttl=30)
+            gen = orchestrator.route_analyzer._graph_generation
+            cached = _cache.get(cache_key, ttl=30, generation=gen)
             if cached:
                 return Response(cached, mimetype='application/json')
 
@@ -815,7 +826,7 @@ def create_app(orchestrator):
                 max_nodes=max_nodes, min_count=min_count, device_ids=device_id_list
             )
             resp_json = json.dumps(graph_data, default=orchestrator._json_serializer)
-            _cache.set(cache_key, resp_json)
+            _cache.set(cache_key, resp_json, generation=gen)
             return Response(resp_json, mimetype='application/json')
         except Exception as e:
             logger.error(f"Error fetching mesh graph data: {e}")
