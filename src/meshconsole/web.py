@@ -226,7 +226,7 @@ def create_app(orchestrator):
 
         # Ensure all packets have top-level latitude/longitude for inline maps
         for packet in paginated_packets:
-            if 'latitude' not in packet:
+            if not packet.get('latitude'):
                 raw = packet.get('raw_packet', {})
                 port = packet.get('port_name', '')
                 be = packet.get('backend', '')
