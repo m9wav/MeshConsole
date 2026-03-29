@@ -224,6 +224,27 @@ def create_app(orchestrator):
             packets = packets[::-1]
             paginated_packets = packets[offset:offset + limit]
 
+        # Ensure all packets have top-level latitude/longitude for inline maps
+        for packet in paginated_packets:
+            if 'latitude' not in packet:
+                raw = packet.get('raw_packet', {})
+                port = packet.get('port_name', '')
+                be = packet.get('backend', '')
+                if port in ('POSITION_APP', 'POSITION'):
+                    pos = raw.get('decoded', {}).get('position', {})
+                    lat = pos.get('latitude', pos.get('latitudeI', 0) / 1e7 if 'latitudeI' in pos else None)
+                    lon = pos.get('longitude', pos.get('longitudeI', 0) / 1e7 if 'longitudeI' in pos else None)
+                    if lat and lon:
+                        packet['latitude'] = lat
+                        packet['longitude'] = lon
+                        packet['altitude'] = pos.get('altitude', 0)
+                elif port in ('NODEINFO', 'NODEINFO_APP') and be == 'meshcore':
+                    lat = raw.get('adv_lat') or raw.get('latitude')
+                    lon = raw.get('adv_lon') or raw.get('longitude')
+                    if lat and lon:
+                        packet['latitude'] = lat
+                        packet['longitude'] = lon
+
         # Enrich MeshCore packets with decoded route data + target resolution
         for packet in paginated_packets:
             raw = packet.get('raw_packet', {})
