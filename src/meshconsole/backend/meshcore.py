@@ -774,8 +774,8 @@ class MeshCoreBackend(MeshBackend):
 
         # Enrich payload with coordinates from contacts cache if not already present
         enriched = dict(payload)
-        if not enriched.get("adv_lat") and prefix in self._contacts:
-            contact = self._contacts[prefix]
+        if not enriched.get("adv_lat") and from_prefix and from_prefix in self._contacts:
+            contact = self._contacts[from_prefix]
             if contact.get("adv_lat"):
                 enriched["adv_lat"] = contact["adv_lat"]
             if contact.get("adv_lon"):
