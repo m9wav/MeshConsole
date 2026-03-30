@@ -772,6 +772,15 @@ class MeshCoreBackend(MeshBackend):
         }
         port_name = port_map.get(payload_type, payload_type or "RAW")
 
+        # Enrich payload with coordinates from contacts cache if not already present
+        enriched = dict(payload)
+        if not enriched.get("adv_lat") and prefix in self._contacts:
+            contact = self._contacts[prefix]
+            if contact.get("adv_lat"):
+                enriched["adv_lat"] = contact["adv_lat"]
+            if contact.get("adv_lon"):
+                enriched["adv_lon"] = contact["adv_lon"]
+
         packet = UnifiedPacket(
             timestamp=datetime.now().isoformat(),
             from_id=f"mc:{from_prefix}",
@@ -784,7 +793,7 @@ class MeshCoreBackend(MeshBackend):
             snr=snr,
             rssi=rssi,
             hop_limit=payload.get("path_len"),
-            raw_packet=payload,
+            raw_packet=enriched,
         )
         self._emit_packet(packet)
         # Track ADVERT emits to prevent duplicate from _on_advertisement
