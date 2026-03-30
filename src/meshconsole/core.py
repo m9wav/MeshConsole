@@ -1440,11 +1440,32 @@ class MeshtasticTool:
                             failed_backends.append(b)
 
                     if failed_backends:
-                        # Only raise if at least one backend was supposed to be connected
+                        # Reconnect failed backends without disrupting healthy ones
                         names = [b.device_id for b in failed_backends]
-                        raise ConnectionError(
-                            f"Backend(s) failed health check: {', '.join(names)}"
-                        )
+                        logger.error(f"Connection lost: Backend(s) failed health check: {', '.join(names)}")
+                        current_time = time.time()
+                        for b in failed_backends:
+                            did = b.device_id
+                            state = _backend_retry_state.get(did, {'failures': 0, 'next_retry': 0.0})
+                            if current_time < state.get('next_retry', 0.0):
+                                continue
+                            if state['failures'] >= _MAX_CONSECUTIVE_FAILURES:
+                                if current_time < state.get('next_retry', 0.0):
+                                    continue
+                                logger.info(f"Retrying suspended backend {did}...")
+                            try:
+                                logger.info(f"Reconnecting {did}...")
+                                b.reconnect()
+                                if b.backend_type == BackendType.MESHTASTIC:
+                                    b._sync_node_db()
+                                logger.info(f"Reconnected {did}")
+                                _backend_retry_state.pop(did, None)
+                            except Exception as re_err:
+                                state['failures'] = state.get('failures', 0) + 1
+                                delay = min(30, 2 ** state['failures'])
+                                state['next_retry'] = current_time + delay
+                                _backend_retry_state[did] = state
+                                logger.error(f"Reconnection failed for {did}: {re_err}")
 
                     # ── Track packet activity ──
                     with self.latest_packets_lock:

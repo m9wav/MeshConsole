@@ -80,7 +80,11 @@ class MeshCoreBackend(MeshBackend):
         self._local_node_id: str | None = None
         self._local_pub_key: str | None = None
         self._device_name: str | None = None
-        self._recent_advert_emits: dict[str, float] = {}  # prefix -> timestamp
+        # Shared across all MeshCore instances to prevent cross-device duplicate adverts
+        if not hasattr(MeshCoreBackend, '_shared_advert_emits'):
+            MeshCoreBackend._shared_advert_emits = {}
+            MeshCoreBackend._shared_advert_lock = threading.Lock()
+        self._recent_advert_emits = MeshCoreBackend._shared_advert_emits
 
         # Asyncio event loop (owned by background thread)
         self._loop: Optional[asyncio.AbstractEventLoop] = None
@@ -531,10 +535,11 @@ class MeshCoreBackend(MeshBackend):
         )
         prefix = pub_key[:12] if pub_key else "unknown"
 
-        # Skip if RX_LOG_DATA already emitted a packet for this advert recently
-        last_emit = self._recent_advert_emits.get(prefix, 0)
-        if time.time() - last_emit < 3:
-            return
+        # Skip if any MeshCore instance already emitted for this advert recently
+        with MeshCoreBackend._shared_advert_lock:
+            last_emit = self._recent_advert_emits.get(prefix, 0)
+            if time.time() - last_emit < 3:
+                return
 
         # Look up existing contact info for richer data
         existing = self._contacts.get(prefix, {})
@@ -796,9 +801,10 @@ class MeshCoreBackend(MeshBackend):
             raw_packet=enriched,
         )
         self._emit_packet(packet)
-        # Track ADVERT emits to prevent duplicate from _on_advertisement
+        # Track ADVERT emits to prevent duplicate from _on_advertisement (shared across instances)
         if payload_type == "ADVERT" and adv_key:
-            self._recent_advert_emits[adv_key[:12]] = time.time()
+            with MeshCoreBackend._shared_advert_lock:
+                self._recent_advert_emits[adv_key[:12]] = time.time()
 
     async def _on_messages_waiting(self, event):
         """Handle MESSAGES_WAITING — trigger message fetch."""

@@ -33,6 +33,8 @@ class DatabaseHandler:
         """Set up SQLite database for message and packet logging."""
         try:
             self.conn = sqlite3.connect(self.db_file, check_same_thread=False)
+            self.conn.execute('PRAGMA journal_mode=WAL')
+            self.conn.execute('PRAGMA synchronous=NORMAL')
             self.cursor = self.conn.cursor()
 
             # Create messages table if not exists
