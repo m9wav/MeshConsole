@@ -335,9 +335,12 @@ class MeshCoreBackend(MeshBackend):
                 self._address, pin=self._pin
             )
         elif self._connection_type == ConnectionType.USB:
-            self._meshcore = await MeshCore.create_serial(
-                self._address, 115200
-            )
+            # Use lower-level API to set 15s timeout before connect — some boards
+            # need >5s to respond to appstart after cold boot
+            from meshcore import SerialConnection as _SerialCx
+            cx = _SerialCx(self._address, 115200)
+            self._meshcore = MeshCore(cx, default_timeout=15)
+            await self._meshcore.connect()
         elif self._connection_type == ConnectionType.TCP:
             self._meshcore = await MeshCore.create_tcp(
                 self._address, self._port or 4000

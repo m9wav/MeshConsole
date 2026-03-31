@@ -1670,6 +1670,9 @@
                 tab.addEventListener('shown.bs.tab', function(e) {
                     const target = e.target.getAttribute('data-bs-target');
                     if (target === '#packets') {
+                        // Force re-render so inline maps are freshly initialised
+                        appState.lastDataHash = null;
+                        fetchPackets();
                         startAutoRefresh();
                     } else if (target === '#send') {
                         loadChannels();
