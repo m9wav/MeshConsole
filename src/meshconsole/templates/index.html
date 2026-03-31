@@ -3294,27 +3294,34 @@
                 const col = document.createElement('div');
                 col.className = 'col-md-6 col-lg-3 mb-3';
 
+                // Unified metric layout — same positions for both device types
+                // Row 1: Signal left, Signal right
+                // Row 2: Voltage, Uptime
+                // Row 3: Packets RX/TX, Packets 24h or extra metric
                 let metricsHtml = '';
                 if (isMC) {
                     const radio = s.radio || {};
                     const pkts = s.packets || {};
                     const core = s.core || {};
+                    const volts = core.battery_mv ? (core.battery_mv / 1000).toFixed(2) + 'V' : '--';
                     metricsHtml = `
-                        <div class="metric"><strong>${radio.noise_floor || '--'}</strong> dBm Noise Floor</div>
-                        <div class="metric"><strong>${radio.last_rssi || '--'}</strong> dBm RSSI</div>
-                        <div class="metric"><strong>${radio.last_snr || '--'}</strong> dB SNR</div>
-                        <div class="metric"><strong>${core.battery_mv ? (core.battery_mv/1000).toFixed(2) + 'V' : '--'}</strong> Battery</div>
-                        <div class="metric"><strong>${pkts.recv || 0}</strong> RX / <strong>${pkts.sent || 0}</strong> TX</div>
-                        <div class="metric"><strong>${core.uptime_secs ? formatUptime(core.uptime_secs) : '--'}</strong> Uptime</div>
+                        <div class="metric">RSSI: <strong>${radio.last_rssi || '--'} dBm</strong></div>
+                        <div class="metric">SNR: <strong>${radio.last_snr || '--'} dB</strong></div>
+                        <div class="metric">Voltage: <strong>${volts}</strong></div>
+                        <div class="metric">Uptime: <strong>${core.uptime_secs ? formatUptime(core.uptime_secs) : '--'}</strong></div>
+                        <div class="metric">Packets: <strong>${(pkts.recv || 0).toLocaleString()}</strong> RX / <strong>${pkts.sent || 0}</strong> TX</div>
+                        <div class="metric">Noise: <strong>${radio.noise_floor || '--'} dBm</strong></div>
                     `;
                 } else {
+                    const volts = s.voltage && s.voltage > 0 ? s.voltage.toFixed(2) + 'V' : '--';
+                    const showVolts = s.battery_level != null && s.battery_level > 100 ? false : true;
                     metricsHtml = `
-                        <div class="metric"><strong>${s.channel_util != null ? s.channel_util.toFixed(1) + '%' : '--'}</strong> Ch Util</div>
-                        <div class="metric"><strong>${s.air_util_tx != null ? s.air_util_tx.toFixed(1) + '%' : '--'}</strong> Air Util TX</div>
-                        <div class="metric"><strong>${s.battery_level != null ? (s.battery_level > 100 ? 'USB Powered' : s.battery_level + '%') : '--'}</strong> Battery</div>
-                        <div class="metric"><strong>${s.voltage && s.voltage > 0 ? s.voltage.toFixed(2) + 'V' : (s.battery_level > 100 ? 'N/A' : '--')}</strong> Voltage</div>
-                        <div class="metric"><strong>${s.uptime_seconds ? formatUptime(s.uptime_seconds) : '--'}</strong> Uptime</div>
-                        <div class="metric"><strong>${dev.packet_count_24h || 0}</strong> Packets (24h)</div>
+                        <div class="metric">Ch Util: <strong>${s.channel_util != null ? s.channel_util.toFixed(1) + '%' : '--'}</strong></div>
+                        <div class="metric">Air Util: <strong>${s.air_util_tx != null ? s.air_util_tx.toFixed(1) + '%' : '--'}</strong></div>
+                        <div class="metric">Voltage: <strong>${showVolts ? volts : 'USB'}</strong></div>
+                        <div class="metric">Uptime: <strong>${s.uptime_seconds ? formatUptime(s.uptime_seconds) : '--'}</strong></div>
+                        <div class="metric">Packets: <strong>${(dev.packet_count_24h || 0).toLocaleString()}</strong> (24h)</div>
+                        <div class="metric">Battery: <strong>${s.battery_level != null ? (s.battery_level > 100 ? 'USB' : s.battery_level + '%') : '--'}</strong></div>
                     `;
                 }
 
