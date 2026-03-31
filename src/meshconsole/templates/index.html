@@ -3311,8 +3311,8 @@
                     metricsHtml = `
                         <div class="metric"><strong>${s.channel_util != null ? s.channel_util.toFixed(1) + '%' : '--'}</strong> Ch Util</div>
                         <div class="metric"><strong>${s.air_util_tx != null ? s.air_util_tx.toFixed(1) + '%' : '--'}</strong> Air Util TX</div>
-                        <div class="metric"><strong>${s.battery_level != null ? s.battery_level + '%' : '--'}</strong> Battery</div>
-                        <div class="metric"><strong>${s.voltage ? s.voltage.toFixed(2) + 'V' : '--'}</strong> Voltage</div>
+                        <div class="metric"><strong>${s.battery_level != null ? (s.battery_level > 100 ? 'USB Powered' : s.battery_level + '%') : '--'}</strong> Battery</div>
+                        <div class="metric"><strong>${s.voltage && s.voltage > 0 ? s.voltage.toFixed(2) + 'V' : (s.battery_level > 100 ? 'N/A' : '--')}</strong> Voltage</div>
                         <div class="metric"><strong>${s.uptime_seconds ? formatUptime(s.uptime_seconds) : '--'}</strong> Uptime</div>
                         <div class="metric"><strong>${dev.packet_count_24h || 0}</strong> Packets (24h)</div>
                     `;
