@@ -18,6 +18,7 @@ import argparse
 import configparser
 import json
 import logging
+import queue
 import signal
 import socket
 import sqlite3
@@ -733,6 +734,8 @@ class MeshtasticTool:
         self._nodeinfo_cache = None   # (timestamp, rows) tuple for decode_route
         self._nodeinfo_cache_ttl = 10  # seconds
         self._nodeinfo_parsed_cache = None  # (timestamp, [{key, name}]) parsed NODEINFO entries
+        self._sse_subscribers: list[queue.Queue] = []
+        self._sse_lock = threading.Lock()
         self.traceroute_completed = False
         self.is_traceroute_mode = False
         self.traceroute_results = {}
@@ -1016,6 +1019,8 @@ class MeshtasticTool:
                 self.latest_packets.append(packet_dict)
                 effective_limit = self.max_packets_memory * max(1, len(self.backends))
                 self.latest_packets = self.latest_packets[-effective_limit:]
+            # Push to SSE subscribers for real-time updates
+            self._publish_sse({'event': 'packet', 'port_name': packet_dict.get('port_name', '')})
 
     def get_local_node_ids(self) -> list[str]:
         """Return all local node IDs across all backends."""
@@ -1667,6 +1672,72 @@ class MeshtasticTool:
 
         logger.info(f"Starting web server at http://{self.web_host}:{self.web_port}")
         app.run(host=self.web_host, port=self.web_port, debug=False, use_reloader=False)
+
+    # ── SSE (Server-Sent Events) ────────────────────────────
+
+    def subscribe_sse(self) -> queue.Queue:
+        """Create a new SSE subscriber queue."""
+        q = queue.Queue(maxsize=50)
+        with self._sse_lock:
+            self._sse_subscribers.append(q)
+        return q
+
+    def unsubscribe_sse(self, q: queue.Queue) -> None:
+        """Remove an SSE subscriber queue."""
+        with self._sse_lock:
+            try:
+                self._sse_subscribers.remove(q)
+            except ValueError:
+                pass
+
+    def _publish_sse(self, packet_dict: dict) -> None:
+        """Push a packet to all SSE subscribers."""
+        with self._sse_lock:
+            dead = []
+            for q in self._sse_subscribers:
+                try:
+                    q.put_nowait(packet_dict)
+                except queue.Full:
+                    dead.append(q)
+            for q in dead:
+                self._sse_subscribers.remove(q)
+
+    # ── Device telemetry ─────────────────────────────────────
+
+    def get_device_telemetry(self) -> list[dict]:
+        """Return per-device stats for the enhanced Stats page."""
+        devices = []
+        for b in self.backends:
+            entry = {
+                'device_id': b.device_id,
+                'name': getattr(b, '_device_name', '') or b.device_id,
+                'type': b.backend_type.value,
+                'connected': b.is_connected,
+                'local_node_id': b.local_node_id,
+                'stats': {},
+            }
+            try:
+                if hasattr(b, 'get_device_stats'):
+                    entry['stats'] = b.get_device_stats()
+            except Exception as e:
+                logger.debug(f"Error getting stats for {b.device_id}: {e}")
+            devices.append(entry)
+
+        # Per-device packet counts from DB
+        try:
+            with self.db_handler.lock:
+                self.db_handler.cursor.execute('''
+                    SELECT device_id, COUNT(*) FROM packets
+                    WHERE timestamp >= datetime('now', '-24 hours')
+                    GROUP BY device_id
+                ''')
+                counts = {row[0]: row[1] for row in self.db_handler.cursor.fetchall()}
+            for d in devices:
+                d['packet_count_24h'] = counts.get(d['device_id'], 0)
+        except Exception:
+            pass
+
+        return devices
 
     # ── Orchestrator-like helpers used by web.py ──────────────
 

@@ -520,6 +520,43 @@ class DatabaseHandler:
                 logger.error(f"Failed to load route adjacency: {e}")
                 return []
 
+    # ── Network health queries (v3.11.0) ─────────────────────
+
+    def fetch_network_health(self, backend=None):
+        """Return network health metrics for the last hour."""
+        with self.lock:
+            try:
+                where = "WHERE timestamp >= datetime('now', '-1 hours')"
+                params = []
+                if backend:
+                    where += ' AND backend = ?'
+                    params.append(backend)
+
+                self.cursor.execute(f'SELECT COUNT(DISTINCT from_id) FROM packets {where}', params)
+                nodes_last_hour = self.cursor.fetchone()[0]
+
+                self.cursor.execute(f'SELECT COUNT(*) FROM packets {where}', params)
+                packets_last_hour = self.cursor.fetchone()[0]
+
+                self.cursor.execute(f'''
+                    SELECT from_id, COUNT(*) as cnt FROM packets {where}
+                    GROUP BY from_id ORDER BY cnt DESC LIMIT 1
+                ''', params)
+                row = self.cursor.fetchone()
+                busiest_node = row[0] if row else None
+                busiest_count = row[1] if row else 0
+
+                return {
+                    'nodes_last_hour': nodes_last_hour,
+                    'packets_last_hour': packets_last_hour,
+                    'packet_rate': round(packets_last_hour / 60, 1),
+                    'busiest_node': busiest_node,
+                    'busiest_count': busiest_count,
+                }
+            except sqlite3.Error as e:
+                logger.error(f"Error fetching network health: {e}")
+                return {}
+
     # ── Conversation queries (v3.8.0) ────────────────────────
 
     def fetch_conversations(self, local_node_ids: list[str] | None = None):

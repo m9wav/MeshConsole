@@ -253,6 +253,23 @@ class MeshCoreBackend(MeshBackend):
             logger.info(f"Path discovery sent to {destination} (result: {getattr(result, 'type', 'unknown')})")
             logger.info(f"Waiting for PATH_RESPONSE event from {destination}...")
 
+    def get_device_stats(self) -> dict:
+        """Return device radio/packet/core stats for telemetry display."""
+        if not self._meshcore or not self._loop:
+            return {}
+        import asyncio
+        stats = {}
+        for cmd_name, key in [('get_stats_radio', 'radio'), ('get_stats_packets', 'packets'), ('get_stats_core', 'core')]:
+            try:
+                cmd = getattr(self._meshcore.commands, cmd_name, None)
+                if cmd:
+                    result = asyncio.run_coroutine_threadsafe(cmd(), self._loop).result(timeout=5)
+                    if result and result.payload:
+                        stats[key] = result.payload
+            except Exception:
+                pass
+        return stats
+
     def send_advertisement(self, flood: bool = False) -> str:
         """Send a device advertisement, optionally as a flood.
 

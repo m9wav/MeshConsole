@@ -882,6 +882,12 @@ def create_app(orchestrator):
 
             port_usage_dict = {port: count for port, count in port_usage}
 
+            network_health = orchestrator.db_handler.fetch_network_health(backend=backend_filter)
+            # Resolve busiest node name
+            if network_health.get('busiest_node'):
+                network_health['busiest_node_name'] = orchestrator.resolve_node_name(
+                    network_health['busiest_node'])
+
             resp_data = {
                 'totalPackets': packet_count,
                 'totalNodes': node_count,
@@ -891,7 +897,8 @@ def create_app(orchestrator):
                     'hours': hours,
                     'packets': hourly_packets,
                     'messages': hourly_messages
-                }
+                },
+                'networkHealth': network_health,
             }
             resp_json = json.dumps(resp_data)
             _cache.set(cache_key, resp_json)
@@ -946,5 +953,50 @@ def create_app(orchestrator):
         except Exception as e:
             logger.error(f"Error exporting data via API: {e}")
             return jsonify({'error': str(e)}), 500
+
+    # ── Server-Sent Events ────────────────────────────────
+
+    @app.route('/stream')
+    def sse_stream():
+        """SSE endpoint for real-time packet push.
+
+        Connections auto-close after 60s to prevent thread exhaustion
+        in gunicorn threaded mode. The browser's EventSource auto-reconnects.
+        """
+        def generate():
+            q = orchestrator.subscribe_sse()
+            start = time.time()
+            try:
+                while time.time() - start < 60:
+                    try:
+                        msg = q.get(timeout=10)
+                        yield f"data: {json.dumps(msg)}\n\n"
+                    except Exception:
+                        yield ": heartbeat\n\n"
+            except GeneratorExit:
+                pass
+            finally:
+                orchestrator.unsubscribe_sse(q)
+
+        return Response(generate(), mimetype='text/event-stream',
+                        headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+
+    # ── Device telemetry ──────────────────────────────────
+
+    @app.route('/stats/devices')
+    def get_device_stats():
+        """Return per-device telemetry for enhanced Stats page."""
+        try:
+            cached = _cache.get('stats-devices', ttl=10)
+            if cached:
+                return Response(cached, mimetype='application/json')
+
+            devices = orchestrator.get_device_telemetry()
+            resp_json = json.dumps({'devices': devices})
+            _cache.set('stats-devices', resp_json)
+            return Response(resp_json, mimetype='application/json')
+        except Exception as e:
+            logger.error(f"Error fetching device stats: {e}")
+            return jsonify({'devices': [], 'error': str(e)}), 500
 
     return app

@@ -220,6 +220,23 @@ class MeshtasticBackend(MeshBackend):
 
         return node_id
 
+    def get_device_stats(self) -> dict:
+        """Return local node telemetry for stats display."""
+        try:
+            if not self._interface or not self._interface.nodes:
+                return {}
+            local = self._interface.nodes.get(self.local_node_id, {})
+            metrics = local.get('deviceMetrics', {})
+            return {
+                'battery_level': metrics.get('batteryLevel'),
+                'voltage': metrics.get('voltage'),
+                'channel_util': metrics.get('channelUtilization'),
+                'air_util_tx': metrics.get('airUtilTx'),
+                'uptime_seconds': metrics.get('uptimeSeconds', 0),
+            }
+        except Exception:
+            return {}
+
     def send_message(self, destination: str, message: str) -> None:
         """Send a text message to a destination node."""
         try:

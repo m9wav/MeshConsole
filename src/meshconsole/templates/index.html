@@ -766,6 +766,22 @@
                 font-size: 0.75rem;
             }
         }
+        .device-card { border-left: 4px solid var(--primary-color); transition: border-color 0.2s; }
+        .device-card.meshcore { border-left-color: var(--warning-color); }
+        .device-card.disconnected { border-left-color: var(--danger-color); opacity: 0.6; }
+        .device-card .device-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem; }
+        .device-card .device-name { font-weight: 600; font-size: 1rem; }
+        .device-card .device-badge { font-size: 0.7rem; padding: 2px 8px; border-radius: 10px; }
+        .device-card .metric-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.4rem; }
+        .device-card .metric { font-size: 0.82rem; color: var(--secondary-color); }
+        .device-card .metric strong { color: var(--text-color); }
+        .device-card .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+        .device-card .status-dot.online { background: var(--success-color); }
+        .device-card .status-dot.offline { background: var(--danger-color); }
+        .sse-indicator { width: 6px; height: 6px; border-radius: 50%; display: inline-block; margin-left: 6px; vertical-align: middle; }
+        .sse-indicator.connected { background: var(--success-color); animation: pulse 2s infinite; }
+        .sse-indicator.disconnected { background: var(--secondary-color); }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
     </style>
 </head>
 <body>
@@ -784,6 +800,7 @@
                         </span>
                     </span>
                     <span class="ms-2" id="last-update">Last update: Never</span>
+                    <span class="sse-indicator disconnected" id="sse-indicator" title="Polling"></span>
                 </div>
             </div>
         </nav>
@@ -1206,6 +1223,42 @@
                         </div>
                     </div>
 
+                    <!-- Network Health -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <div class="card card-modern">
+                                <div class="card-header card-header-modern">
+                                    <h5 class="mb-0"><i class="bi bi-heart-pulse text-danger"></i> Network Health <small class="text-muted">(last hour)</small></h5>
+                                </div>
+                                <div class="card-body">
+                                    <div class="row text-center" id="network-health-metrics">
+                                        <div class="col-3">
+                                            <div class="stats-number" id="health-nodes" style="font-size:1.5rem;">--</div>
+                                            <div class="stats-label">Active Nodes</div>
+                                        </div>
+                                        <div class="col-3">
+                                            <div class="stats-number" id="health-rate" style="font-size:1.5rem;">--</div>
+                                            <div class="stats-label">Packets / min</div>
+                                        </div>
+                                        <div class="col-3">
+                                            <div class="stats-number" id="health-busiest" style="font-size:1.5rem;">--</div>
+                                            <div class="stats-label">Busiest Node</div>
+                                        </div>
+                                        <div class="col-3">
+                                            <div class="stats-number" id="health-total" style="font-size:1.5rem;">--</div>
+                                            <div class="stats-label">Packets (1h)</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Per-Device Telemetry -->
+                    <div class="row mb-4" id="device-telemetry-row">
+                        <!-- Populated by fetchDeviceTelemetry() -->
+                    </div>
+
                     <div class="row">
                         <div class="col-lg-8">
                             <div class="card card-modern">
@@ -1435,7 +1488,9 @@
                 totalNodes: 0,
                 messagesToday: 0,
                 portUsage: {}
-            }
+            },
+            eventSource: null,
+            sseConnected: false,
         };
 
         // Initialize application
@@ -1677,20 +1732,69 @@
             checkAuthStatus().then(() => {
                 updateUptime();
                 fetchPackets();
-                // Load node list for autocomplete but don't render cards yet
                 fetchNodeList();
                 updateSystemInfo();
                 loadChannels();
                 startAutoRefresh();
+                initSSE();
                 appState.uptimeTimer = setInterval(updateUptime, 60000);
-                // Prefetch map data so Mesh Map tab opens instantly
                 networkMapState.prefetchMap = fetch('/network-map-data').then(r => r.json()).catch(() => null);
                 networkMapState.prefetchGraph = fetch('/mesh-graph?max_nodes=80&min_count=2').then(r => r.json()).catch(() => ({nodes:[], links:[]}));
             });
         }
 
+        // ── Server-Sent Events for real-time push ──────────
+        function initSSE() {
+            if (appState.eventSource) {
+                try { appState.eventSource.close(); } catch(e) {}
+            }
+            try {
+                const es = new EventSource('/stream');
+                appState.eventSource = es;
+                es.onopen = function() {
+                    appState.sseConnected = true;
+                    updateSSEIndicator();
+                    // SSE is live — stop polling
+                    if (appState.autoRefreshTimer) {
+                        clearInterval(appState.autoRefreshTimer);
+                        appState.autoRefreshTimer = null;
+                    }
+                };
+                es.onmessage = function(e) {
+                    // New packet arrived — invalidate hash and refresh if on Live Packets tab
+                    appState.lastDataHash = null;
+                    const activeTab = document.querySelector('.tab-pane.active');
+                    if (activeTab && activeTab.id === 'packets') {
+                        fetchPackets();
+                    }
+                };
+                es.onerror = function() {
+                    appState.sseConnected = false;
+                    updateSSEIndicator();
+                    try { es.close(); } catch(e) {}
+                    appState.eventSource = null;
+                    // Fall back to polling
+                    if (appState.autoRefresh && !appState.autoRefreshTimer) {
+                        startAutoRefresh();
+                    }
+                    // Retry SSE after 10s
+                    setTimeout(initSSE, 10000);
+                };
+            } catch(e) {
+                // SSE not supported — polling continues
+            }
+        }
+
+        function updateSSEIndicator() {
+            const el = document.getElementById('sse-indicator');
+            if (el) {
+                el.className = 'sse-indicator ' + (appState.sseConnected ? 'connected' : 'disconnected');
+                el.title = appState.sseConnected ? 'Live (SSE connected)' : 'Polling';
+            }
+        }
+
         function startAutoRefresh() {
-            if (appState.autoRefresh) {
+            if (appState.autoRefresh && !appState.sseConnected) {
                 appState.autoRefreshTimer = setInterval(fetchPackets, appState.refreshInterval);
             }
         }
@@ -3148,7 +3252,6 @@
             if (appState.backendFilter && !appState.backendFilter.startsWith('device:')) {
                 statsBackend = `?backend=${appState.backendFilter}`;
             }
-            // Lazy-init charts on first Stats visit (Chart.js is deferred)
             if (!window.activityChart && typeof Chart !== 'undefined') {
                 initializeCharts();
             }
@@ -3156,6 +3259,7 @@
                 .then(response => response.json())
                 .then(data => {
                     updateStatsDisplay(data);
+                    renderNetworkHealth(data.networkHealth || {});
                     if (window.activityChart) {
                         updateCharts(data);
                     }
@@ -3163,6 +3267,85 @@
                 .catch(error => {
                     console.error('Error fetching stats:', error);
                 });
+            fetchDeviceTelemetry();
+        }
+
+        function renderNetworkHealth(h) {
+            document.getElementById('health-nodes').textContent = h.nodes_last_hour || 0;
+            document.getElementById('health-rate').textContent = h.packet_rate || 0;
+            document.getElementById('health-busiest').textContent = h.busiest_node_name || h.busiest_node || '--';
+            document.getElementById('health-total').textContent = (h.packets_last_hour || 0).toLocaleString();
+        }
+
+        function fetchDeviceTelemetry() {
+            fetch('/stats/devices')
+                .then(r => r.json())
+                .then(data => renderDeviceCards(data.devices || []))
+                .catch(e => console.error('Device telemetry error:', e));
+        }
+
+        function renderDeviceCards(devices) {
+            const container = document.getElementById('device-telemetry-row');
+            if (!container) return;
+            container.innerHTML = '';
+            devices.forEach(dev => {
+                const isMC = dev.type === 'meshcore';
+                const s = dev.stats || {};
+                const col = document.createElement('div');
+                col.className = 'col-md-6 col-lg-3 mb-3';
+
+                let metricsHtml = '';
+                if (isMC) {
+                    const radio = s.radio || {};
+                    const pkts = s.packets || {};
+                    const core = s.core || {};
+                    metricsHtml = `
+                        <div class="metric"><strong>${radio.noise_floor || '--'}</strong> dBm Noise Floor</div>
+                        <div class="metric"><strong>${radio.last_rssi || '--'}</strong> dBm RSSI</div>
+                        <div class="metric"><strong>${radio.last_snr || '--'}</strong> dB SNR</div>
+                        <div class="metric"><strong>${core.battery_mv ? (core.battery_mv/1000).toFixed(2) + 'V' : '--'}</strong> Battery</div>
+                        <div class="metric"><strong>${pkts.recv || 0}</strong> RX / <strong>${pkts.sent || 0}</strong> TX</div>
+                        <div class="metric"><strong>${core.uptime_secs ? formatUptime(core.uptime_secs) : '--'}</strong> Uptime</div>
+                    `;
+                } else {
+                    metricsHtml = `
+                        <div class="metric"><strong>${s.channel_util != null ? s.channel_util.toFixed(1) + '%' : '--'}</strong> Ch Util</div>
+                        <div class="metric"><strong>${s.air_util_tx != null ? s.air_util_tx.toFixed(1) + '%' : '--'}</strong> Air Util TX</div>
+                        <div class="metric"><strong>${s.battery_level != null ? s.battery_level + '%' : '--'}</strong> Battery</div>
+                        <div class="metric"><strong>${s.voltage ? s.voltage.toFixed(2) + 'V' : '--'}</strong> Voltage</div>
+                        <div class="metric"><strong>${s.uptime_seconds ? formatUptime(s.uptime_seconds) : '--'}</strong> Uptime</div>
+                        <div class="metric"><strong>${dev.packet_count_24h || 0}</strong> Packets (24h)</div>
+                    `;
+                }
+
+                col.innerHTML = `
+                    <div class="card card-modern device-card ${isMC ? 'meshcore' : ''} ${!dev.connected ? 'disconnected' : ''}">
+                        <div class="card-body" style="padding:1rem;">
+                            <div class="device-header">
+                                <div>
+                                    <span class="status-dot ${dev.connected ? 'online' : 'offline'}"></span>
+                                    <span class="device-name">${dev.name}</span>
+                                </div>
+                                <span class="badge ${isMC ? 'bg-warning text-dark' : 'bg-primary'} device-badge">${dev.type}</span>
+                            </div>
+                            <div class="metric-grid">
+                                ${metricsHtml}
+                            </div>
+                        </div>
+                    </div>
+                `;
+                container.appendChild(col);
+            });
+        }
+
+        function formatUptime(secs) {
+            if (!secs) return '--';
+            const d = Math.floor(secs / 86400);
+            const h = Math.floor((secs % 86400) / 3600);
+            const m = Math.floor((secs % 3600) / 60);
+            if (d > 0) return d + 'd ' + h + 'h';
+            if (h > 0) return h + 'h ' + m + 'm';
+            return m + 'm';
         }
 
         function updateStatsDisplay(stats) {
