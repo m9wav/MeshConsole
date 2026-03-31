@@ -1467,7 +1467,7 @@ class MeshtasticTool:
                                 _backend_retry_state.pop(did, None)
                             except Exception as re_err:
                                 state['failures'] = state.get('failures', 0) + 1
-                                delay = min(30, 2 ** state['failures'])
+                                delay = min(120, 2 ** state['failures'])
                                 state['next_retry'] = current_time + delay
                                 _backend_retry_state[did] = state
                                 logger.error(f"Reconnection failed for {did}: {re_err}")
@@ -1507,10 +1507,10 @@ class MeshtasticTool:
                             if rt is not None and not rt.is_alive():
                                 needs_reconnect = True
                     elif not b.is_connected:
-                        # MeshCore: require 3 consecutive failures before reconnecting
-                        # (serial companion can momentarily report disconnected during async ops)
+                        # MeshCore: require 6 consecutive failures (30s at 5s intervals)
+                        # before reconnecting. Rapid reconnects corrupt device SPIFFS.
                         mc_fails = _backend_retry_state.get(did, {}).get('mc_consecutive', 0) + 1
-                        if mc_fails >= 3:
+                        if mc_fails >= 6:
                             needs_reconnect = True
                         else:
                             state = _backend_retry_state.get(did, {'failures': 0, 'next_retry': 0.0})
