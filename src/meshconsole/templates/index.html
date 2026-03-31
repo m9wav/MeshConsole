@@ -1847,11 +1847,13 @@
                     const total = response.total || packets.length;
 
                     // Check if data has actually changed before re-rendering
-                    // Use lightweight hash: count + first/last timestamps
-                    const dataHash = packets.length + ':' +
+                    // Include filter state + total in hash so filter changes trigger re-render
+                    // but repeated polls with same filtered data don't
+                    const dataHash = packets.length + ':' + total + ':' +
                         (packets[0] ? packets[0].timestamp : '') + ':' +
                         (packets[packets.length - 1] ? packets[packets.length - 1].timestamp : '') + ':' +
-                        (packets[0] ? packets[0].from_id : '');
+                        (appState.portFilter || '') + ':' + (appState.backendFilter || '') + ':' +
+                        (appState.nodeFilter ? appState.nodeFilter.id : '');
                     if (appState.lastDataHash !== dataHash) {
                         renderPackets(packets);
                         appState.lastDataHash = dataHash;
@@ -1866,15 +1868,21 @@
                     // Update packet count
                     const start = packets.length > 0 ? appState.offset + 1 : 0;
                     const end = appState.offset + packets.length;
-                    let filterText = '';
+                    const filters = [];
                     if (appState.portFilter) {
-                        // Show the friendly label from the dropdown instead of raw port names
                         const portSelect = document.getElementById('port-filter');
-                        const selectedOption = portSelect ? portSelect.options[portSelect.selectedIndex] : null;
-                        filterText = selectedOption && selectedOption.value ? ` (${selectedOption.textContent})` : '';
+                        const opt = portSelect ? portSelect.options[portSelect.selectedIndex] : null;
+                        if (opt && opt.value) filters.push(opt.textContent);
                     }
+                    if (appState.backendFilter) {
+                        const entry = (appState.backendEntries || []).find(e => 'device:' + e.device_id === appState.backendFilter);
+                        filters.push(entry ? entry.device_name || entry.device_id : appState.backendFilter);
+                    }
+                    if (appState.nodeFilter) filters.push(appState.nodeFilter.name);
+                    const filterText = filters.length ? ` — filtered: ${filters.join(', ')}` : '';
+                    const isFiltered = response.filtered || filters.length > 0;
                     document.getElementById('packet-count').textContent =
-                        `Showing ${start}-${end} of ${total} packets${filterText}`;
+                        `Showing ${start}-${end} of ${total}${isFiltered ? ' matching' : ''} packets${filterText}`;
                 })
                 .catch(error => {
                     console.error('Error fetching packets:', error);
