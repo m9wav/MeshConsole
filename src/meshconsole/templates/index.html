@@ -3318,10 +3318,10 @@
                     metricsHtml = `
                         <div class="metric">Ch Util: <strong>${s.channel_util != null ? s.channel_util.toFixed(1) + '%' : '--'}</strong></div>
                         <div class="metric">Air Util: <strong>${s.air_util_tx != null ? s.air_util_tx.toFixed(1) + '%' : '--'}</strong></div>
-                        <div class="metric">Voltage: <strong>${showVolts ? volts : 'USB'}</strong></div>
+                        <div class="metric">Voltage: <strong>${s.voltage && s.voltage > 0 ? s.voltage.toFixed(2) + 'V' : 'USB'}</strong></div>
                         <div class="metric">Uptime: <strong>${s.uptime_seconds ? formatUptime(s.uptime_seconds) : '--'}</strong></div>
                         <div class="metric">Packets: <strong>${(dev.packet_count_24h || 0).toLocaleString()}</strong> (24h)</div>
-                        <div class="metric">Battery: <strong>${s.battery_level != null ? (s.battery_level > 100 ? 'USB' : s.battery_level + '%') : '--'}</strong></div>
+                        <div class="metric">&nbsp;</div>
                     `;
                 }
 
