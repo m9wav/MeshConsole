@@ -1708,9 +1708,13 @@ class MeshtasticTool:
         """Return per-device stats for the enhanced Stats page."""
         devices = []
         for b in self.backends:
+            # Resolve device name: MeshCore uses _device_name, Meshtastic uses node_name_map
+            dev_name = getattr(b, '_device_name', '')
+            if not dev_name and b.local_node_id and hasattr(b, 'node_name_map'):
+                dev_name = b.node_name_map.get(b.local_node_id, '')
             entry = {
                 'device_id': b.device_id,
-                'name': getattr(b, '_device_name', '') or b.device_id,
+                'name': dev_name or b.device_id,
                 'type': b.backend_type.value,
                 'connected': b.is_connected,
                 'local_node_id': b.local_node_id,
