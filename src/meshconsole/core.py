@@ -1379,7 +1379,7 @@ class MeshtasticTool:
         while True:
             try:
                 while True:
-                    time.sleep(1)
+                    time.sleep(5)
                     current_time = time.time()
 
                     # ── Health check each backend independently ──
@@ -1507,7 +1507,15 @@ class MeshtasticTool:
                             if rt is not None and not rt.is_alive():
                                 needs_reconnect = True
                     elif not b.is_connected:
-                        needs_reconnect = True
+                        # MeshCore: require 3 consecutive failures before reconnecting
+                        # (serial companion can momentarily report disconnected during async ops)
+                        mc_fails = _backend_retry_state.get(did, {}).get('mc_consecutive', 0) + 1
+                        if mc_fails >= 3:
+                            needs_reconnect = True
+                        else:
+                            state = _backend_retry_state.get(did, {'failures': 0, 'next_retry': 0.0})
+                            state['mc_consecutive'] = mc_fails
+                            _backend_retry_state[did] = state
 
                     if not needs_reconnect:
                         # Backend is healthy — reset its retry state
