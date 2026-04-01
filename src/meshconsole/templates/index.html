@@ -1763,13 +1763,21 @@
                         appState.autoRefreshTimer = null;
                     }
                 };
+                let _sseDebounce = null;
                 es.onmessage = function(e) {
-                    // New packet arrived — invalidate hash and refresh if on Live Packets tab
-                    appState.lastDataHash = null;
+                    if (!appState.autoRefresh) return;
                     const activeTab = document.querySelector('.tab-pane.active');
-                    if (activeTab && activeTab.id === 'packets') {
+                    if (!activeTab || activeTab.id !== 'packets') return;
+
+                    // Debounce: batch rapid SSE events into one fetch.
+                    // Don't invalidate lastDataHash — let the hash comparison
+                    // in fetchPackets decide if a re-render is needed. This
+                    // prevents DOM jolt when the fetched data is unchanged.
+                    if (_sseDebounce) clearTimeout(_sseDebounce);
+                    _sseDebounce = setTimeout(() => {
+                        _sseDebounce = null;
                         fetchPackets();
-                    }
+                    }, 1500);
                 };
                 es.onerror = function() {
                     appState.sseConnected = false;
@@ -1811,6 +1819,7 @@
                 button.innerHTML = '<i class="bi bi-pause-circle"></i> Auto-refresh: ON';
                 button.className = 'btn btn-success-modern btn-modern ms-2';
                 refreshBtn.style.display = 'none';
+                initSSE();
                 startAutoRefresh();
             } else {
                 button.innerHTML = '<i class="bi bi-play-circle"></i> Auto-refresh: OFF';
@@ -1819,6 +1828,13 @@
                 if (appState.autoRefreshTimer) {
                     clearInterval(appState.autoRefreshTimer);
                     appState.autoRefreshTimer = null;
+                }
+                // Close SSE to stop all background updates
+                if (appState.eventSource) {
+                    try { appState.eventSource.close(); } catch(e) {}
+                    appState.eventSource = null;
+                    appState.sseConnected = false;
+                    updateSSEIndicator();
                 }
             }
         }
