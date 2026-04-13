@@ -71,6 +71,7 @@ class MeshCoreBackend(MeshBackend):
         # Internal state
         self._meshcore: Optional[object] = None  # MeshCore instance
         self._contacts: dict[str, dict] = {}     # pubkey_prefix -> contact dict
+        self._contacts_generation: int = 0       # bumps on any contact mutation
         self._channels: list[dict] = []           # channel info list
         self._last_rx_snr: Optional[float] = None  # SNR from most recent RX_LOG_DATA
         self._last_rx_rssi: Optional[float] = None # RSSI from most recent RX_LOG_DATA
@@ -405,6 +406,7 @@ class MeshCoreBackend(MeshBackend):
                     if prefix:
                         contact["_full_pub_key"] = pub_key
                         self._contacts[prefix] = contact
+                        self._contacts_generation += 1
                         name = contact.get("adv_name", "")
                         logger.debug(f"Loaded contact: {name or prefix} ({prefix})")
 
@@ -621,6 +623,7 @@ class MeshCoreBackend(MeshBackend):
             "adv_lon": longitude,
             "last_seen": datetime.now().isoformat(),
         }
+        self._contacts_generation += 1
         self._emit_packet(packet)
 
     async def _on_battery(self, event):
@@ -762,6 +765,7 @@ class MeshCoreBackend(MeshBackend):
             if adv_lon:
                 update["adv_lon"] = adv_lon
             self._contacts[prefix] = update
+            self._contacts_generation += 1
 
         # Skip types that have dedicated event handlers to avoid duplicates.
         # CONTACT_MSG_RECV handles TXT_MSG, CHANNEL_MSG_RECV handles GRP_TXT,

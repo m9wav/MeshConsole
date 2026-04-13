@@ -836,15 +836,18 @@ def create_app(orchestrator):
             min_count = int(request.args.get('min_count', 2))
             device_ids = request.args.get('device_ids', '')
             device_id_list = [d.strip() for d in device_ids.split(',') if d.strip()] if device_ids else None
+            focus_node = request.args.get('focus_node', '').strip() or None
+            max_hops = int(request.args.get('max_hops', 3))
 
-            cache_key = f"graph:{max_nodes}:{min_count}:{device_ids}"
+            cache_key = f"graph:{max_nodes}:{min_count}:{device_ids}:{focus_node}:{max_hops}"
             gen = orchestrator.route_analyzer._graph_generation
             cached = _cache.get(cache_key, ttl=30, generation=gen)
             if cached:
                 return Response(cached, mimetype='application/json')
 
             graph_data = orchestrator.get_mesh_graph_data(
-                max_nodes=max_nodes, min_count=min_count, device_ids=device_id_list
+                max_nodes=max_nodes, min_count=min_count, device_ids=device_id_list,
+                focus_node=focus_node, max_hops=max_hops,
             )
             resp_json = json.dumps(graph_data, default=orchestrator._json_serializer)
             _cache.set(cache_key, resp_json, generation=gen)

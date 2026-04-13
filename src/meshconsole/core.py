@@ -734,6 +734,8 @@ class MeshtasticTool:
         self._nodeinfo_cache = None   # (timestamp, rows) tuple for decode_route
         self._nodeinfo_cache_ttl = 10  # seconds
         self._nodeinfo_parsed_cache = None  # (timestamp, [{key, name}]) parsed NODEINFO entries
+        self._decode_route_cache: dict[tuple, list[dict]] = {}
+        self._decode_route_gen: int = -1  # last generation seen
         self._sse_subscribers: list[queue.Queue] = []
         self._sse_lock = threading.Lock()
         self.traceroute_completed = False
@@ -1961,6 +1963,22 @@ class MeshtasticTool:
         if not path_hex:
             return []
 
+        # Check decode cache — invalidate when contacts or NODEINFO change
+        gen = sum(
+            getattr(b, '_contacts_generation', 0)
+            for b in self.backends
+            if b.backend_type == BackendType.MESHCORE
+        )
+        if self._nodeinfo_parsed_cache:
+            gen += int(self._nodeinfo_parsed_cache[0])
+        if gen != self._decode_route_gen:
+            self._decode_route_cache.clear()
+            self._decode_route_gen = gen
+        cache_key = (path_hex, hash_size)
+        cached = self._decode_route_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         # Build lookup from live contacts + historical NODEINFO packets.
         # Live contacts take priority; DB fills gaps for nodes not currently
         # in the contacts cache.  For hash_size >= 2, collisions are rare
@@ -2061,9 +2079,14 @@ class MeshtasticTool:
                 if confidence >= 0.7:
                     hop['ambiguous'] = False
 
+        # Store in decode cache (cap at 512 entries)
+        if len(self._decode_route_cache) >= 512:
+            self._decode_route_cache.clear()
+        self._decode_route_cache[cache_key] = hops
+
         return hops
 
-    def get_mesh_graph_data(self, max_nodes: int = 0, min_count: int = 2, device_ids: list[str] | None = None) -> dict:
+    def get_mesh_graph_data(self, max_nodes: int = 0, min_count: int = 2, device_ids: list[str] | None = None, focus_node: str | None = None, max_hops: int = 3) -> dict:
         """Return graph data for D3.js force-directed visualization.
 
         Reads from the RouteAnalyzer's adjacency cache and the node hash
@@ -2116,6 +2139,55 @@ class MeshtasticTool:
             with analyzer._lock:
                 edge_counts = dict(analyzer._graph_edge_counts)
                 node_hashes = set(analyzer._graph_node_hashes)
+
+        # Neighbourhood mode: BFS from focus node, keep only nearby hashes
+        hop_distances: dict[str, int] | None = None
+        focus_hash: str | None = None
+        if focus_node:
+            # Resolve focus_node to a 1-byte hash
+            focus_hash = None
+            fn = focus_node.strip().lower()
+            if fn.startswith('h:') and len(fn) == 4:
+                focus_hash = fn[2:]
+            elif len(fn) == 2 and all(c in '0123456789abcdef' for c in fn):
+                focus_hash = fn
+            elif len(fn) >= 12 and all(c in '0123456789abcdef' for c in fn[:12]):
+                focus_hash = fn[:2]
+            else:
+                # Try name match (case-insensitive)
+                for h, names in hash_to_names.items():
+                    if any(n.lower() == fn for n in names):
+                        focus_hash = h
+                        break
+
+            if focus_hash and focus_hash in node_hashes:
+                # Build adjacency from edge_counts with per-node neighbour cap
+                # to prevent hash-collision explosion (top 6 strongest per hash)
+                adj: dict[str, list[str]] = {}
+                for (a, b), cnt in sorted(edge_counts.items(), key=lambda x: -x[1]):
+                    adj.setdefault(a, [])
+                    adj.setdefault(b, [])
+                    if len(adj[a]) < 6:
+                        adj[a].append(b)
+                    if len(adj[b]) < 6:
+                        adj[b].append(a)
+
+                visited = {focus_hash: 0}
+                frontier = {focus_hash}
+                for hop_level in range(1, max_hops + 1):
+                    next_frontier = set()
+                    for h in frontier:
+                        for nbr in adj.get(h, []):
+                            if nbr not in visited:
+                                visited[nbr] = hop_level
+                                next_frontier.add(nbr)
+                    frontier = next_frontier
+                    if not frontier:
+                        break
+                node_hashes = set(visited.keys())
+                edge_counts = {k: v for k, v in edge_counts.items()
+                               if k[0] in node_hashes and k[1] in node_hashes}
+                hop_distances = visited
 
         # Expand hashes into individual nodes using pubkey prefixes
         # Each real node gets its own graph entry with a unique ID (pubkey prefix)
@@ -2503,7 +2575,7 @@ class MeshtasticTool:
         total_links = len(links)
 
         # ── Server-side filtering for performance ──
-        if max_nodes > 0 and len(nodes) > max_nodes:
+        if max_nodes > 0 and len(nodes) > max_nodes and not focus_node:
             # Always keep: local nodes + direct neighbors + their direct
             # connections (2nd hop) so the path into the main mesh is preserved.
             keep_ids: set[str] = set()
@@ -2549,7 +2621,7 @@ class MeshtasticTool:
 
         # Cap links for D3 performance: keep top 4 strongest per node, max 300 total.
         # Always preserve local node links and bridge links to maintain connectivity.
-        if len(links) > 300:
+        if len(links) > 300 and not focus_node:
             local_node_ids = {n['id'] for n in nodes if n.get('is_local')}
             # Identify links that touch local nodes or their direct neighbors
             local_nbrs = set()
@@ -2582,12 +2654,22 @@ class MeshtasticTool:
             links = protected + kept
             _count_connections(nodes, links)
 
-        return {
+        result = {
             'nodes': nodes,
             'links': links,
             'total_nodes': total_nodes,
             'total_links': total_links,
         }
+        if hop_distances:
+            node_hop_map = {}
+            for n in nodes:
+                dist = hop_distances.get(n.get('hash', ''), -1)
+                node_hop_map[n['id']] = dist
+            result['hop_distances'] = node_hop_map
+            result['focus_hash'] = focus_hash
+            focus_nids = hash_to_node_ids.get(focus_hash, [])
+            result['focus_node_id'] = focus_nids[0] if focus_nids else None
+        return result
 
     # ── Flood advertisement ────────────────────────────────────
 

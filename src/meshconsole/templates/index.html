@@ -1136,6 +1136,16 @@
                                        onchange="meshGraphState.maxNodes=+this.value;meshGraphRefresh();">
                                 <small id="graph-max-label" style="opacity:0.7;">80</small>
                             </div>
+                            <button id="graph-back-global-btn" onclick="meshGraphBackToGlobal()" title="Back to Global View" style="display:none;margin-top:6px;">
+                                <i class="bi bi-globe2"></i>
+                            </button>
+                            <div id="graph-hops-control" style="margin-top:6px;align-items:center;gap:4px;display:none;">
+                                <small style="opacity:0.7;white-space:nowrap;">Hops</small>
+                                <input type="range" id="graph-max-hops" min="1" max="6" value="3" step="1"
+                                       style="width:60px;accent-color:#2563eb;" title="Neighbourhood radius"
+                                       onchange="meshGraphState.maxHops=+this.value;document.getElementById('graph-hops-label').textContent=this.value;meshGraphRefreshNeighbourhood();">
+                                <small id="graph-hops-label" style="opacity:0.7;">3</small>
+                            </div>
                         </div>
                         <div class="mesh-graph-legend" id="mesh-graph-legend" style="display:none;">
                             <div class="mesh-graph-legend-item">
@@ -1149,6 +1159,18 @@
                             </div>
                             <div class="mesh-graph-legend-item">
                                 <span class="mesh-graph-legend-dot" style="background:#94a3b8;"></span> Unknown hash
+                            </div>
+                            <div class="mesh-graph-legend-item" id="graph-legend-focus" style="display:none;">
+                                <span class="mesh-graph-legend-dot" style="background:#ef4444;"></span> Focus
+                            </div>
+                            <div class="mesh-graph-legend-item" id="graph-legend-hop1" style="display:none;">
+                                <span class="mesh-graph-legend-dot" style="background:#f97316;"></span> 1 hop
+                            </div>
+                            <div class="mesh-graph-legend-item" id="graph-legend-hop2" style="display:none;">
+                                <span class="mesh-graph-legend-dot" style="background:#eab308;"></span> 2 hops
+                            </div>
+                            <div class="mesh-graph-legend-item" id="graph-legend-hop3" style="display:none;">
+                                <span class="mesh-graph-legend-dot" style="background:#22c55e;"></span> 3+ hops
                             </div>
                         </div>
                         <div class="mesh-graph-stats" id="mesh-graph-stats" style="display:none;">
@@ -5058,6 +5080,8 @@
             data: null,
             highlightedNode: null,
             maxNodes: 80,
+            focusNode: null,   // node ID for neighbourhood mode (null = global)
+            maxHops: 3,
         };
 
         function populateGraphDeviceFilters() {
@@ -5084,6 +5108,10 @@
 
         function fetchMeshGraph() {
             populateGraphDeviceFilters();
+            // Clear neighbourhood state when loading global view
+            meshGraphState.focusNode = null;
+            updateNeighbourhoodUI(false);
+
             // Show loading spinner
             const loadingEl = document.getElementById('mesh-graph-loading');
             const emptyEl = document.getElementById('mesh-graph-empty');
@@ -5193,6 +5221,16 @@
 
             function nodeColor(d) {
                 if (d.is_local) return '#10b981';            // local node, green
+                // Neighbourhood mode: colour by hop distance
+                const hd = data.hop_distances;
+                if (hd && hd[d.id] !== undefined) {
+                    const dist = hd[d.id];
+                    if (dist === 0) return '#ef4444';        // focus node, red
+                    if (dist === 1) return '#f97316';        // 1 hop, orange
+                    if (dist === 2) return '#eab308';        // 2 hops, yellow
+                    if (dist === 3) return '#22c55e';        // 3 hops, green
+                    return '#6366f1';                        // 4+ hops, indigo
+                }
                 if (d.confidence >= 0.7) return '#2563eb';   // high confidence, blue
                 if (d.confidence > 0) return '#d97706';      // ambiguous, orange
                 return '#94a3b8';                            // unknown, gray
@@ -5257,6 +5295,11 @@
                 .on('click', function(event, d) {
                     meshGraphState.lockedNode = null; // Clear lock on direct click
                     highlightNodeConnections(d);
+                })
+                .on('dblclick', function(event, d) {
+                    event.stopPropagation();
+                    meshGraphState.focusNode = d.id;
+                    fetchMeshGraphNeighbourhood(d.id);
                 });
 
             // Labels (shown on hover via CSS proximity, but also visible for hub nodes)
@@ -5450,7 +5493,72 @@
             const label = document.getElementById('graph-max-label');
             if (label) label.textContent = meshGraphState.maxNodes || 80;
             appState.meshGraphLoaded = false;
+            if (meshGraphState.focusNode) {
+                fetchMeshGraphNeighbourhood(meshGraphState.focusNode);
+            } else {
+                fetchMeshGraph();
+            }
+        }
+
+        function fetchMeshGraphNeighbourhood(nodeId) {
+            const loadingEl = document.getElementById('mesh-graph-loading');
+            const emptyEl = document.getElementById('mesh-graph-empty');
+            if (loadingEl) loadingEl.style.display = '';
+            if (emptyEl) emptyEl.style.display = 'none';
+
+            const maxHops = meshGraphState.maxHops || 3;
+            let url = `/mesh-graph?focus_node=${encodeURIComponent(nodeId)}&max_hops=${maxHops}`;
+            if (meshGraphState.selectedDevices && meshGraphState.selectedDevices.length > 0) {
+                url += `&device_ids=${encodeURIComponent(meshGraphState.selectedDevices.join(','))}`;
+            }
+            fetch(url)
+                .then(r => r.json())
+                .then(data => {
+                    if (loadingEl) loadingEl.style.display = 'none';
+                    meshGraphState.data = data;
+                    meshGraphState.focusNode = nodeId;
+                    appState.meshGraphLoaded = true;
+                    renderMeshGraph(data);
+                    updateNeighbourhoodUI(true);
+                })
+                .catch(err => {
+                    console.error('Error fetching neighbourhood:', err);
+                    if (loadingEl) loadingEl.style.display = 'none';
+                });
+        }
+
+        function meshGraphBackToGlobal() {
+            meshGraphState.focusNode = null;
+            updateNeighbourhoodUI(false);
+            appState.meshGraphLoaded = false;
             fetchMeshGraph();
+        }
+
+        function meshGraphRefreshNeighbourhood() {
+            if (meshGraphState.focusNode) {
+                fetchMeshGraphNeighbourhood(meshGraphState.focusNode);
+            }
+        }
+
+        function updateNeighbourhoodUI(active) {
+            const backBtn = document.getElementById('graph-back-global-btn');
+            const hopsCtrl = document.getElementById('graph-hops-control');
+            ['graph-legend-focus','graph-legend-hop1','graph-legend-hop2','graph-legend-hop3'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.style.display = active ? '' : 'none';
+            });
+            if (backBtn) backBtn.style.display = active ? '' : 'none';
+            if (hopsCtrl) hopsCtrl.style.display = active ? 'flex' : 'none';
+            // Update stats text
+            const statsEl = document.getElementById('mesh-graph-stats');
+            if (active && meshGraphState.data && meshGraphState.data.focus_node_id) {
+                const focusName = (meshGraphState.data.nodes || []).find(
+                    n => n.id === meshGraphState.data.focus_node_id
+                );
+                const nameStr = focusName ? focusName.name : meshGraphState.focusNode;
+                const totalEl = document.getElementById('graph-total-info');
+                if (totalEl) totalEl.textContent = ` — neighbourhood of ${nameStr} (${meshGraphState.maxHops} hops)`;
+            }
         }
 
         function showNodeInGraph(nodeId) {
