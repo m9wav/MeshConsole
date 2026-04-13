@@ -1897,6 +1897,50 @@ class MeshtasticTool:
         self._nodeinfo_parsed_cache = (now, entries)
         return entries
 
+    def _build_device_edge_counts(self, device_ids: list[str]) -> tuple[dict, set]:
+        """Build edge counts from packets belonging to specific devices.
+
+        Scans the packets table for MeshCore packets with path data from the
+        given devices and extracts hash-pair edges.  Returns the same format
+        as RouteAnalyzer's materialized graph data.
+        """
+        placeholders = ','.join('?' * len(device_ids))
+        try:
+            with self.db_handler.lock:
+                self.db_handler.cursor.execute(
+                    f"SELECT raw_packet FROM packets "
+                    f"WHERE device_id IN ({placeholders}) AND backend='meshcore'",
+                    device_ids,
+                )
+                rows = self.db_handler.cursor.fetchall()
+        except Exception:
+            return {}, set()
+
+        edge_counts: dict[tuple[str, str], int] = {}
+        node_hashes: set[str] = set()
+        for (raw_json,) in rows:
+            try:
+                raw = json.loads(raw_json) if isinstance(raw_json, str) else raw_json
+                path = raw.get('path', '')
+                if not path or len(path) < 4:
+                    continue
+                hashes = [path[i:i + 2].lower() for i in range(0, len(path), 2)]
+                for i in range(len(hashes) - 1):
+                    edge_key = tuple(sorted([hashes[i], hashes[i + 1]]))
+                    edge_counts[edge_key] = edge_counts.get(edge_key, 0) + 1
+                for h in hashes:
+                    node_hashes.add(h)
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        # Filter weak edges (same threshold as RouteAnalyzer)
+        edge_counts = {k: v for k, v in edge_counts.items() if v >= 2}
+        node_hashes = set()
+        for a, b in edge_counts:
+            node_hashes.add(a)
+            node_hashes.add(b)
+        return edge_counts, node_hashes
+
     def decode_route(self, path_hex: str, hash_size: int = 1) -> list[dict]:
         """Decode a MeshCore path to a list of hop dicts.
 
@@ -2065,10 +2109,13 @@ class MeshtasticTool:
                 hash_to_pubkeys.setdefault(h, []).append(full_key[:12])
                 seen_keys.add(full_key.lower())
 
-        # Use pre-materialized graph data (maintained incrementally by learn_route)
-        with analyzer._lock:
-            edge_counts = dict(analyzer._graph_edge_counts)
-            node_hashes = set(analyzer._graph_node_hashes)
+        # Use device-specific edge counts when filtering, otherwise shared data
+        if device_ids:
+            edge_counts, node_hashes = self._build_device_edge_counts(device_ids)
+        else:
+            with analyzer._lock:
+                edge_counts = dict(analyzer._graph_edge_counts)
+                node_hashes = set(analyzer._graph_node_hashes)
 
         # Expand hashes into individual nodes using pubkey prefixes
         # Each real node gets its own graph entry with a unique ID (pubkey prefix)
