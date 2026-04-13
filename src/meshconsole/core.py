@@ -2271,6 +2271,19 @@ class MeshtasticTool:
 
         _count_connections(nodes, links)
 
+        # Boost confidence for ambiguous nodes that were actively selected
+        # as link endpoints.  The link-building logic already used adjacency
+        # scores and geo to pick the best candidate per hash — if a node has
+        # connections, it was chosen over its competitors, so its displayed
+        # confidence should reflect that rather than the raw 1/N hash fallback.
+        for n in nodes:
+            if n.get('candidates', 0) > 1 and n.get('connections', 0) > 0:
+                conns = n['connections']
+                # Scale: 1 connection → 0.75, 3+ → 0.85 (cap)
+                boosted = min(0.85, 0.7 + 0.05 * min(conns, 3))
+                if boosted > n.get('confidence', 0):
+                    n['confidence'] = round(boosted, 2)
+
         # Add local node(s) — connected to their nearest repeaters
         # Build per-device last_hop_counts so devices on different frequencies
         # don't get phantom cross-links

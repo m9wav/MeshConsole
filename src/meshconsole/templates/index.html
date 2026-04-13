@@ -2390,11 +2390,11 @@
 
                 if (isLocal) cls += ' hop-local';
                 const loopBadge = isLoop ? '<span title="Node seen earlier in route" style="font-size:0.6rem;vertical-align:super;">↻</span>' : '';
-                // Make resolved hops clickable
-                const nd = (hop.candidates > 0 && label !== hop.hash) ? (appState.sortedNodes || []).find(n => n.name === label) : null;
-                if (nd) {
+                // Make resolved hops clickable — defer node lookup to click time
+                // so it works even if sortedNodes hasn't loaded yet (race on initial render)
+                if (hop.candidates > 0 && label !== hop.hash) {
                     const esc = label.replace(/'/g, "\\'").replace(/"/g, '&quot;');
-                    return `<span class="${cls}" title="${tooltip}" style="cursor:pointer;text-decoration:underline dotted;text-underline-offset:2px;" onclick="filterByNode('${nd.id}', '${esc}')">${label}${loopBadge}</span>`;
+                    return `<span class="${cls}" title="${tooltip}" style="cursor:pointer;text-decoration:underline dotted;text-underline-offset:2px;" onclick="filterByHopName('${esc}')">${label}${loopBadge}</span>`;
                 }
                 return `<span class="${cls}" title="${tooltip}">${label}${loopBadge}</span>`;
             });
@@ -2580,6 +2580,11 @@
                 (node.shortName && node.shortName.toLowerCase().includes(term))
             );
             renderNodes(filtered);
+        }
+
+        function filterByHopName(name) {
+            const nd = (appState.sortedNodes || []).find(n => n.name === name);
+            if (nd) filterByNode(nd.id, name);
         }
 
         function filterByNode(nodeId, nodeName) {
