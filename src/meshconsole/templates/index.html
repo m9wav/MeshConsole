@@ -1174,7 +1174,8 @@
                             </div>
                         </div>
                         <div class="mesh-graph-stats" id="mesh-graph-stats" style="display:none;">
-                            <span id="graph-node-count">0</span> nodes, <span id="graph-link-count">0</span> links<span id="graph-total-info"></span>
+                            <span id="graph-neighbourhood-banner" style="display:none;"></span>
+                            <span id="graph-global-stats"><span id="graph-node-count">0</span> nodes, <span id="graph-link-count">0</span> links<span id="graph-total-info"></span></span>
                         </div>
                         <div class="mesh-graph-tooltip" id="mesh-graph-tooltip"></div>
                     </div>
@@ -5172,11 +5173,14 @@
             const shown = data.nodes.length;
             const total = data.total_nodes || shown;
             const linkTotal = data.total_links || data.links.length;
-            document.getElementById('graph-node-count').textContent = shown;
-            document.getElementById('graph-link-count').textContent = data.links.length;
-            const totalInfo = document.getElementById('graph-total-info');
-            if (totalInfo) {
-                totalInfo.textContent = total > shown ? ` (of ${total} total, ${linkTotal} links)` : '';
+            // Update stats — neighbourhood mode uses its own banner via updateNeighbourhoodUI
+            if (!data.hop_distances) {
+                document.getElementById('graph-node-count').textContent = shown;
+                document.getElementById('graph-link-count').textContent = data.links.length;
+                const totalInfo = document.getElementById('graph-total-info');
+                if (totalInfo) {
+                    totalInfo.textContent = total > shown ? ` (of ${total} total, ${linkTotal} links)` : '';
+                }
             }
 
             // Remove old SVG if present
@@ -5274,9 +5278,13 @@
             nodeEls
                 .on('mouseover', function(event, d) {
                     d3.select(this).attr('stroke', '#0f172a').attr('stroke-width', 3);
+                    const hd = data.hop_distances;
+                    const hopDist = hd ? hd[d.id] : undefined;
+                    const hopTag = hopDist === 0 ? ' <span style="color:#ef4444;font-weight:bold;">[Focus]</span>'
+                        : (hopDist > 0 ? ` <span style="opacity:0.6;">(${hopDist} hop${hopDist > 1 ? 's' : ''})</span>` : '');
                     tooltip.innerHTML = `
-                        <strong>${d.name}</strong><br>
-                        <span style="opacity:0.7">Hash: ${d.id}</span><br>
+                        <strong>${d.name}</strong>${hopTag}<br>
+                        <span style="opacity:0.7">${d.id}</span><br>
                         Connections: ${d.connections}<br>
                         ${d.candidates > 1 ? `Candidates: ${d.candidates}<br>` : ''}
                         Confidence: ${Math.round(d.confidence * 100)}%
@@ -5543,21 +5551,30 @@
         function updateNeighbourhoodUI(active) {
             const backBtn = document.getElementById('graph-back-global-btn');
             const hopsCtrl = document.getElementById('graph-hops-control');
+            const banner = document.getElementById('graph-neighbourhood-banner');
+            const globalStats = document.getElementById('graph-global-stats');
             ['graph-legend-focus','graph-legend-hop1','graph-legend-hop2','graph-legend-hop3'].forEach(id => {
                 const el = document.getElementById(id);
                 if (el) el.style.display = active ? '' : 'none';
             });
             if (backBtn) backBtn.style.display = active ? '' : 'none';
             if (hopsCtrl) hopsCtrl.style.display = active ? 'flex' : 'none';
-            // Update stats text
-            const statsEl = document.getElementById('mesh-graph-stats');
-            if (active && meshGraphState.data && meshGraphState.data.focus_node_id) {
-                const focusName = (meshGraphState.data.nodes || []).find(
+            if (active && meshGraphState.data) {
+                const focusNode = (meshGraphState.data.nodes || []).find(
                     n => n.id === meshGraphState.data.focus_node_id
                 );
-                const nameStr = focusName ? focusName.name : meshGraphState.focusNode;
-                const totalEl = document.getElementById('graph-total-info');
-                if (totalEl) totalEl.textContent = ` — neighbourhood of ${nameStr} (${meshGraphState.maxHops} hops)`;
+                const name = focusNode ? focusNode.name : meshGraphState.focusNode;
+                const nodeCount = (meshGraphState.data.nodes || []).length;
+                const linkCount = (meshGraphState.data.links || []).length;
+                if (banner) {
+                    banner.innerHTML = `Neighbourhood of <strong>${name}</strong> (${meshGraphState.maxHops} hops) &mdash; ${nodeCount} nodes, ${linkCount} links `
+                        + `<button onclick="meshGraphBackToGlobal()" style="border:none;background:rgba(255,255,255,0.15);color:inherit;border-radius:4px;padding:1px 8px;cursor:pointer;font-size:0.78rem;vertical-align:middle;" title="Back to global view"><i class="bi bi-x-lg"></i> Reset</button>`;
+                    banner.style.display = '';
+                }
+                if (globalStats) globalStats.style.display = 'none';
+            } else {
+                if (banner) banner.style.display = 'none';
+                if (globalStats) globalStats.style.display = '';
             }
         }
 
