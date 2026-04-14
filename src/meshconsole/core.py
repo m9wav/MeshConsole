@@ -1448,7 +1448,10 @@ class MeshtasticTool:
                                     failed_backends.append(b)
 
                             elif b.backend_type == BackendType.MESHCORE:
-                                if not b.is_connected:
+                                # Grace period: skip health check for 120s after
+                                # connect to allow bootstrap config + contacts load
+                                connect_age = time.time() - getattr(b, '_connect_time', 0)
+                                if not b.is_connected and connect_age > 120:
                                     failed_backends.append(b)
                         except (BrokenPipeError, OSError) as health_err:
                             logger.debug(f"Health check error for {b.device_id}: {health_err}")

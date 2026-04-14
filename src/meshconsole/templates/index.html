@@ -992,7 +992,7 @@
                                 <div class="ms-auto d-flex gap-2 align-items-center">
                                     <input type="text" class="form-control form-control-modern" id="ch-msg-search" placeholder="Search messages..." style="border-radius:20px;font-size:0.8rem;width:180px;display:none;">
                                     <button class="btn btn-sm btn-outline-secondary" onclick="toggleChannelSearch()" title="Search messages"><i class="bi bi-search"></i></button>
-                                    <button class="btn btn-sm btn-outline-info" id="ch-info-btn" onclick="showChannelInfo()" title="Channel Info" style="display:none;"><i class="bi bi-info-circle"></i></button>
+                                    <button class="btn btn-sm btn-outline-info" id="ch-info-btn" onclick="showChannelInfo()" title="Channel Settings" style="display:none;"><i class="bi bi-gear"></i> Manage</button>
                                 </div>
                             </div>
                             <div class="channel-messages" id="ch-messages">
@@ -3945,23 +3945,26 @@
         }
 
         function showAlert(message, type) {
-            const alertContainer = document.getElementById('send-status');
-            alertContainer.innerHTML = `
-                <div class="alert alert-${type} alert-modern alert-dismissible fade show" role="alert">
-                    <i class="bi bi-${type === 'success' ? 'check-circle' : type === 'warning' ? 'exclamation-triangle' : 'x-circle'}"></i>
-                    ${message}
-                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-                </div>
+            // Use a floating toast-style alert visible from any tab
+            let container = document.getElementById('global-alert-container');
+            if (!container) {
+                container = document.createElement('div');
+                container.id = 'global-alert-container';
+                container.style.cssText = 'position:fixed;top:70px;right:20px;z-index:9999;max-width:420px;';
+                document.body.appendChild(container);
+            }
+            const alertEl = document.createElement('div');
+            alertEl.className = `alert alert-${type} alert-dismissible fade show shadow`;
+            alertEl.style.cssText = 'font-size:0.88rem;border-radius:12px;';
+            alertEl.innerHTML = `
+                <i class="bi bi-${type === 'success' ? 'check-circle' : type === 'warning' ? 'exclamation-triangle' : type === 'info' ? 'info-circle' : 'x-circle'}"></i>
+                ${message}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
             `;
-            
-            // Auto-dismiss after 5 seconds
+            container.appendChild(alertEl);
             setTimeout(() => {
-                const alert = alertContainer.querySelector('.alert');
-                if (alert) {
-                    const bsAlert = new bootstrap.Alert(alert);
-                    bsAlert.close();
-                }
-            }, 5000);
+                try { new bootstrap.Alert(alertEl).close(); } catch(e) { alertEl.remove(); }
+            }, 8000);
         }
 
         // Load saved settings on startup

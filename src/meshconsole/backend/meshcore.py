@@ -12,7 +12,9 @@ License: MIT
 """
 
 import asyncio
+import configparser
 import logging
+import os
 import threading
 import time
 from datetime import datetime
@@ -107,6 +109,30 @@ class MeshCoreBackend(MeshBackend):
     @property
     def backend_type(self) -> BackendType:
         return BackendType.MESHCORE
+
+    def _load_bootstrap_config(self) -> dict | None:
+        """Load bootstrap config for this device from device_bootstrap.ini."""
+        # Search in common locations relative to the working directory
+        for path in ['device_bootstrap.ini', os.path.join(os.getcwd(), 'device_bootstrap.ini')]:
+            if os.path.exists(path):
+                try:
+                    cp = configparser.ConfigParser()
+                    cp.read(path)
+                    if self._device_id in cp:
+                        sec = cp[self._device_id]
+                        bc = {}
+                        if sec.get('name'): bc['name'] = sec['name']
+                        if sec.get('freq'): bc['freq'] = float(sec['freq'])
+                        if sec.get('bw'): bc['bw'] = float(sec['bw'])
+                        if sec.get('sf'): bc['sf'] = int(sec['sf'])
+                        if sec.get('cr'): bc['cr'] = int(sec['cr'])
+                        if sec.get('lat'): bc['lat'] = float(sec['lat'])
+                        if sec.get('lon'): bc['lon'] = float(sec['lon'])
+                        if sec.get('tx_power'): bc['tx_power'] = int(sec['tx_power'])
+                        return bc if bc else None
+                except Exception as e:
+                    logger.debug(f"Error reading bootstrap config: {e}")
+        return None
 
     @property
     def is_connected(self) -> bool:
@@ -375,20 +401,13 @@ class MeshCoreBackend(MeshBackend):
                 "and the connection type is correct."
             )
 
-        # Subscribe to events
-        self._meshcore.subscribe(EventType.CONTACT_MSG_RECV, self._on_contact_message)
-        self._meshcore.subscribe(EventType.CHANNEL_MSG_RECV, self._on_channel_message)
-        self._meshcore.subscribe(EventType.ADVERTISEMENT, self._on_advertisement)
-        self._meshcore.subscribe(EventType.BATTERY, self._on_battery)
-        self._meshcore.subscribe(EventType.TELEMETRY_RESPONSE, self._on_telemetry)
-        self._meshcore.subscribe(EventType.PATH_RESPONSE, self._on_path_response)
-        self._meshcore.subscribe(EventType.ACK, self._on_ack)
-        self._meshcore.subscribe(EventType.DISCONNECTED, self._on_disconnected)
-        self._meshcore.subscribe(EventType.STATUS_RESPONSE, self._on_status_response)
-        self._meshcore.subscribe(EventType.RX_LOG_DATA, self._on_rx_log_data)
-        self._meshcore.subscribe(EventType.MESSAGES_WAITING, self._on_messages_waiting)
+        # Mark connected early so the health check grace period protects
+        # the bootstrap config phase from being killed prematurely
+        self._connected = True
+        self._connect_time = time.time()
 
-        # Initialize device state
+        # Initialize device state — subscribe to events AFTER bootstrap
+        # to avoid DISCONNECTED events killing the connection during config
         self_info = await self._meshcore.commands.send_appstart()
         logger.debug(f"send_appstart result type: {getattr(self_info, 'type', None)}")
         if self_info and hasattr(self_info, "payload") and self_info.payload:
@@ -408,11 +427,57 @@ class MeshCoreBackend(MeshBackend):
                 self._local_node_id = f"mc:{self._local_pub_key[:12]}"
             logger.info(f"Self info: name={self._device_name}, pub_key={self._local_pub_key[:12] if self._local_pub_key else 'N/A'}")
 
+        # If self_info is empty or has a default hex name (SPIFFS persistence
+        # failure), apply bootstrap config from device_bootstrap.ini.
+        # This configures the device inline during the existing connection —
+        # no separate connect/disconnect cycle that would corrupt SPIFFS.
+        _needs_bootstrap = (
+            not self._device_name
+            or (len(self._device_name) == 8 and all(c in '0123456789ABCDEFabcdef' for c in self._device_name))
+        )
+        if _needs_bootstrap:
+            bc = self._load_bootstrap_config()
+            if bc:
+                logger.info(f"Empty self info for {self._device_id} — applying bootstrap config inline")
+                try:
+                    if 'name' in bc:
+                        await self._meshcore.commands.set_name(bc['name'])
+                    if 'freq' in bc:
+                        await self._meshcore.commands.set_radio(
+                            bc['freq'], bc.get('bw', 62.5), bc.get('sf', 8), bc.get('cr', 8))
+                    if 'lat' in bc and 'lon' in bc:
+                        await self._meshcore.commands.set_coords(bc['lat'], bc['lon'])
+                    if 'tx_power' in bc:
+                        await self._meshcore.commands.set_tx_power(bc['tx_power'])
+                    await self._meshcore.commands.set_autoadd_config(1)
+                    self._device_name = bc.get('name', self._device_id)
+                    logger.info(f"Bootstrap config applied: {self._device_name}")
+                except Exception as e:
+                    logger.warning(f"Failed to apply bootstrap config: {e}")
+                    self._device_name = self._device_id or 'MeshCore'
+            else:
+                self._device_name = self._device_id or 'MeshCore'
+                logger.warning(f"Empty self info for {self._device_id}, no bootstrap config found")
+
         device_info = await self._meshcore.commands.send_device_query()
         logger.debug(f"device_query result type: {getattr(device_info, 'type', None)}")
 
         # Set time on the device
         await self._meshcore.commands.set_time(int(time.time()))
+
+        # Now subscribe to events — after bootstrap is complete so
+        # transient serial glitches during config don't kill the connection
+        self._meshcore.subscribe(EventType.CONTACT_MSG_RECV, self._on_contact_message)
+        self._meshcore.subscribe(EventType.CHANNEL_MSG_RECV, self._on_channel_message)
+        self._meshcore.subscribe(EventType.ADVERTISEMENT, self._on_advertisement)
+        self._meshcore.subscribe(EventType.BATTERY, self._on_battery)
+        self._meshcore.subscribe(EventType.TELEMETRY_RESPONSE, self._on_telemetry)
+        self._meshcore.subscribe(EventType.PATH_RESPONSE, self._on_path_response)
+        self._meshcore.subscribe(EventType.ACK, self._on_ack)
+        self._meshcore.subscribe(EventType.DISCONNECTED, self._on_disconnected)
+        self._meshcore.subscribe(EventType.STATUS_RESPONSE, self._on_status_response)
+        self._meshcore.subscribe(EventType.RX_LOG_DATA, self._on_rx_log_data)
+        self._meshcore.subscribe(EventType.MESSAGES_WAITING, self._on_messages_waiting)
 
         # Fetch contacts — payload is dict[full_pubkey_hex -> contact_dict]
         contacts_result = await self._meshcore.commands.get_contacts(lastmod=0)
@@ -453,6 +518,7 @@ class MeshCoreBackend(MeshBackend):
         await self._meshcore.start_auto_message_fetching()
 
         self._connected = True
+        self._connect_time = time.time()
         logger.info(
             f"MeshCore connected via {self._connection_type.value} "
             f"(node: {self._local_node_id})"
