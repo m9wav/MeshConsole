@@ -5,7 +5,7 @@ Author: M9WAV
 License: MIT
 """
 
-__version__ = "3.12.3"
+__version__ = "3.13.0"
 __author__ = "M9WAV"
 
 from meshconsole.core import (

@@ -338,6 +338,47 @@
         .theme-dark .messages-container { border-color: #334155; }
         @media (max-width: 768px) { .thread-list { width: 100%; } .conversation-view { display: none; } .messages-container.thread-open .thread-list { display: none; } .messages-container.thread-open .conversation-view { display: flex; width: 100%; } }
 
+        /* Channel tab */
+        .channels-container { display: flex; height: calc(100vh - 160px); min-height: 400px; border-radius: 15px; overflow: hidden; border: 1px solid var(--border-color); }
+        .channel-list { width: 35%; min-width: 260px; overflow-y: auto; background: var(--light-color); }
+        .channel-item { display: flex; align-items: center; padding: 0.75rem 1rem; cursor: pointer; border-bottom: 1px solid var(--border-color); transition: background 0.15s; }
+        .channel-item:hover { background: rgba(14, 165, 233, 0.06); }
+        .channel-item.active { background: rgba(14, 165, 233, 0.12); border-left: 3px solid #0ea5e9; }
+        .channel-avatar { width: 40px; height: 40px; border-radius: 50%; background: linear-gradient(135deg, #0ea5e9, #38bdf8); color: white; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 1.1rem; flex-shrink: 0; margin-right: 0.75rem; }
+        .channel-info { flex: 1; min-width: 0; }
+        .channel-name { font-weight: 600; font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .channel-preview { font-size: 0.78rem; color: var(--secondary-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+        .channel-meta { flex-shrink: 0; margin-left: 0.5rem; text-align: right; }
+        .channel-time { font-size: 0.7rem; color: var(--secondary-color); }
+        .channel-badge { display: inline-block; background: #0ea5e9; color: white; font-size: 0.65rem; padding: 0.15rem 0.45rem; border-radius: 10px; margin-top: 4px; }
+        .channel-view { flex: 1; display: flex; flex-direction: column; background: #fff; }
+        .channel-header { padding: 0.75rem 1.2rem; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; gap: 0.5rem; }
+        .channel-messages { flex: 1; overflow-y: auto; padding: 1rem 1.2rem; display: flex; flex-direction: column; }
+        .channel-input { padding: 0.7rem 1rem; border-top: 1px solid var(--border-color); display: flex; gap: 0.5rem; position: relative; }
+        .channel-input input { flex: 1; border-radius: 20px; border: 1px solid var(--border-color); padding: 0.5rem 1rem; font-size: 0.9rem; outline: none; }
+        .channel-input input:focus { border-color: #0ea5e9; box-shadow: 0 0 0 2px rgba(14,165,233,0.15); }
+        .channel-input button { border-radius: 50%; width: 38px; height: 38px; border: none; background: #0ea5e9; color: white; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: background 0.15s; flex-shrink: 0; }
+        .channel-input button:hover { background: #0284c7; }
+        .ch-msg-bubble { max-width: 78%; padding: 0.55rem 0.9rem; border-radius: 16px; margin-bottom: 0.3rem; font-size: 0.88rem; line-height: 1.45; word-break: break-word; }
+        .ch-msg-self { margin-left: auto; background: linear-gradient(135deg, #0ea5e9, #38bdf8); color: white; border-bottom-right-radius: 4px; }
+        .ch-msg-other { margin-right: auto; background: var(--light-color); border-bottom-left-radius: 4px; }
+        .ch-msg-sender { font-size: 0.72rem; font-weight: 600; color: #0ea5e9; margin-bottom: 2px; }
+        .ch-msg-self .ch-msg-sender { color: rgba(255,255,255,0.75); }
+        .ch-msg-time { font-size: 0.65rem; opacity: 0.5; margin-top: 2px; }
+        .ch-msg-self .ch-msg-time { text-align: right; }
+        .ch-date-sep { text-align: center; font-size: 0.72rem; color: var(--secondary-color); margin: 0.8rem 0; }
+        .theme-dark .channel-list { background: #1e293b; }
+        .theme-dark .channel-item { border-color: #334155; }
+        .theme-dark .channel-item:hover { background: rgba(14,165,233,0.1); }
+        .theme-dark .channel-item.active { background: rgba(14,165,233,0.18); }
+        .theme-dark .channel-view { background: #0f172a; }
+        .theme-dark .channel-header { border-color: #334155; }
+        .theme-dark .channel-input { border-color: #334155; }
+        .theme-dark .channel-input input { background: #1e293b; border-color: #334155; color: #e2e8f0; }
+        .theme-dark .ch-msg-other { background: #334155; color: #e2e8f0; }
+        .theme-dark .channels-container { border-color: #334155; }
+        @media (max-width: 768px) { .channel-list { width: 100%; } .channel-view { display: none; } .channels-container.channel-open .channel-list { display: none; } .channels-container.channel-open .channel-view { display: flex; width: 100%; } }
+
         .traceroute-hop {
             background: rgba(37, 99, 235, 0.1);
             border-radius: 10px;
@@ -818,8 +859,8 @@
                         <i class="bi bi-chat-dots"></i> Messages
                     </button>
                 </li>
-                <li class="nav-item" role="presentation" id="send-tab-item" style="display:none;">
-                    <button class="nav-link" id="send-tab" data-bs-toggle="tab" data-bs-target="#send" type="button" role="tab">
+                <li class="nav-item" role="presentation" id="channels-tab-item" style="display:none;">
+                    <button class="nav-link" id="channels-tab" data-bs-toggle="tab" data-bs-target="#channels-pane" type="button" role="tab">
                         <i class="bi bi-megaphone"></i> Channels
                     </button>
                 </li>
@@ -924,46 +965,46 @@
                 </div>
 
                 <!-- Send Message Tab -->
-                <div class="tab-pane fade" id="send" role="tabpanel">
-                    <!-- Hidden stubs for backward-compat JS references -->
-                    <div style="display:none;">
-                        <form id="send-message-form"><input id="destination-node"><input id="destination-node-value"><div id="destination-autocomplete"></div><select id="send-source-device"></select><textarea id="message-text"></textarea><span id="char-count"></span><input id="want-ack" type="checkbox"><div id="send-status"></div></form>
-                    </div>
-                    <div class="alert alert-warning auth-required-banner mb-3" id="send-auth-banner" style="display: none;">
-                        <i class="bi bi-lock"></i> <strong>Authentication Required</strong> — Log in to access all features.
-                    </div>
-                    <div class="row">
-                        <div class="col-lg-8">
-                            <div class="card card-modern">
-                                <div class="card-header card-header-modern">
-                                    <h5 class="mb-0"><i class="bi bi-megaphone text-info"></i> Channel Message</h5>
+                <!-- Hidden stubs for backward-compat JS references -->
+                <div style="display:none;">
+                    <form id="send-message-form"><input id="destination-node"><input id="destination-node-value"><div id="destination-autocomplete"></div><select id="send-source-device"></select><textarea id="message-text"></textarea><span id="char-count"></span><input id="want-ack" type="checkbox"><div id="send-status"></div></form>
+                    <select id="channel-select"></select><select id="channel-device-select"></select><textarea id="channel-message-text"></textarea>
+                </div>
+
+                <div class="tab-pane fade" id="channels-pane" role="tabpanel">
+                    <div class="channels-container" id="channels-container">
+                        <div class="channel-list" id="channel-list">
+                            <div style="padding:0.6rem 0.8rem;border-bottom:1px solid var(--border-color);">
+                                <input type="text" class="form-control form-control-modern" id="channel-search" placeholder="Search channels..." style="border-radius:20px;font-size:0.85rem;">
+                            </div>
+                            <div id="channel-items" style="padding:0;">
+                                <div class="conversation-empty" style="padding:2rem;text-align:center;opacity:0.5;">
+                                    <i class="bi bi-megaphone" style="font-size:2rem;"></i><br>Loading channels...
                                 </div>
-                                <div class="card-body">
-                                    <p class="text-muted mb-3">Send a message to a public or private channel. For direct messages, use the <strong>Messages</strong> tab.</p>
-                                    <form id="channel-message-form">
-                                        <div class="row mb-3">
-                                            <div class="col-md-6">
-                                                <label class="form-label">Channel</label>
-                                                <select class="form-select form-control-modern" id="channel-select">
-                                                    <option value="">Loading channels...</option>
-                                                </select>
-                                            </div>
-                                            <div class="col-md-6">
-                                                <label class="form-label">Device</label>
-                                                <select class="form-select form-control-modern" id="channel-device-select">
-                                                    <option value="">Loading...</option>
-                                                </select>
-                                            </div>
-                                        </div>
-                                        <div class="mb-3">
-                                            <label class="form-label">Message</label>
-                                            <textarea class="form-control form-control-modern" id="channel-message-text" rows="3" maxlength="200" placeholder="Message to channel..." required></textarea>
-                                        </div>
-                                        <button type="submit" class="btn btn-info btn-modern">
-                                            <i class="bi bi-megaphone"></i> Send to Channel
-                                        </button>
-                                    </form>
+                            </div>
+                        </div>
+                        <div class="channel-view" id="channel-view">
+                            <div class="channel-header" id="ch-header" style="display:none;">
+                                <button class="btn btn-sm btn-light d-md-none" onclick="closeChannel()" style="margin-right:0.5rem;"><i class="bi bi-arrow-left"></i></button>
+                                <i class="bi bi-megaphone text-info"></i>
+                                <span id="ch-name" style="font-weight:600;">Select a channel</span>
+                                <span class="badge bg-secondary ms-2" id="ch-msg-count" style="font-size:0.7rem;"></span>
+                                <div class="ms-auto d-flex gap-2 align-items-center">
+                                    <input type="text" class="form-control form-control-modern" id="ch-msg-search" placeholder="Search messages..." style="border-radius:20px;font-size:0.8rem;width:180px;display:none;">
+                                    <button class="btn btn-sm btn-outline-secondary" onclick="toggleChannelSearch()" title="Search messages"><i class="bi bi-search"></i></button>
+                                    <button class="btn btn-sm btn-outline-info" id="ch-info-btn" onclick="showChannelInfo()" title="Channel Info" style="display:none;"><i class="bi bi-info-circle"></i></button>
                                 </div>
+                            </div>
+                            <div class="channel-messages" id="ch-messages">
+                                <div class="conversation-empty" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;opacity:0.4;">
+                                    <i class="bi bi-megaphone" style="font-size:3rem;"></i>
+                                    <p style="margin-top:1rem;">Select a channel to view messages</p>
+                                </div>
+                            </div>
+                            <div class="channel-input" id="ch-input" style="display:none;">
+                                <input type="text" id="ch-reply-input" placeholder="Message to channel..." maxlength="200" autocomplete="off">
+                                <span id="ch-char-count" style="font-size:0.7rem;color:var(--secondary-color);position:absolute;right:60px;bottom:18px;"></span>
+                                <button onclick="sendChannelReply()" title="Send"><i class="bi bi-send"></i></button>
                             </div>
                         </div>
                     </div>
@@ -1697,8 +1738,8 @@
                         appState.lastDataHash = null;
                         fetchPackets();
                         startAutoRefresh();
-                    } else if (target === '#send') {
-                        loadChannels();
+                    } else if (target === '#channels-pane') {
+                        fetchChannelList();
                     } else if (target === '#messages') {
                         fetchConversations();
                     } else if (target === '#nodes') {
@@ -1731,6 +1772,8 @@
                         appState.autoRefreshTimer = null;
                     } else if (target === '#messages') {
                         stopThreadPoll();
+                    } else if (target === '#channels-pane') {
+                        stopChannelPoll();
                     }
                     // Map and graph are NO LONGER torn down on tab switch —
                     // they persist in the DOM for instant tab switching.
@@ -1790,17 +1833,21 @@
                 es.onmessage = function(e) {
                     if (!appState.autoRefresh) return;
                     const activeTab = document.querySelector('.tab-pane.active');
-                    if (!activeTab || activeTab.id !== 'packets') return;
+                    if (!activeTab) return;
 
-                    // Debounce: batch rapid SSE events into one fetch.
-                    // Don't invalidate lastDataHash — let the hash comparison
-                    // in fetchPackets decide if a re-render is needed. This
-                    // prevents DOM jolt when the fetched data is unchanged.
                     if (_sseDebounce) clearTimeout(_sseDebounce);
-                    _sseDebounce = setTimeout(() => {
-                        _sseDebounce = null;
-                        fetchPackets();
-                    }, 1500);
+                    if (activeTab.id === 'packets') {
+                        _sseDebounce = setTimeout(() => {
+                            _sseDebounce = null;
+                            fetchPackets();
+                        }, 1500);
+                    } else if (activeTab.id === 'channels-pane') {
+                        _sseDebounce = setTimeout(() => {
+                            _sseDebounce = null;
+                            fetchChannelList();
+                            if (chState.activeChannel) fetchChannelMessages(chState.activeChannel);
+                        }, 1500);
+                    }
                 };
                 es.onerror = function() {
                     appState.sseConnected = false;
@@ -3007,75 +3054,239 @@
             });
         }
 
-        // ── Channel messaging ─────────────────────────────
-        function loadChannels() {
-            const devSelect = document.getElementById('channel-device-select');
-            const entries = appState.backendEntries || [];
-            const connected = entries.filter(e => e.connected);
+        // ── Channels tab ──────────────────────────────────
+        let chState = { activeChannel: null, pollTimer: null, channels: [] };
 
-            if (connected.length === 0 || !devSelect) return;
-            devSelect.innerHTML = '';
-            connected.forEach(e => {
-                const opt = document.createElement('option');
-                opt.value = e.device_id;
-                const typeName = (e.type || '').charAt(0).toUpperCase() + (e.type || '').slice(1);
-                opt.textContent = `${typeName}: ${e.device_name || e.device_id}`;
-                devSelect.appendChild(opt);
+        function loadChannels() { fetchChannelList(); }
+
+        function fetchChannelList() {
+            fetch('/channels').then(r => r.json()).then(data => {
+                chState.channels = data.channels || [];
+                renderChannelList(chState.channels);
+            }).catch(() => {});
+        }
+
+        // Strip embedded "SenderName: " prefix from MeshCore channel messages
+        function stripSenderPrefix(msg, senderName) {
+            if (!msg || !senderName) return msg || '';
+            const prefix = senderName + ': ';
+            return msg.startsWith(prefix) ? msg.slice(prefix.length) : msg;
+        }
+
+        function renderChannelList(channels) {
+            const container = document.getElementById('channel-items');
+            if (!container) return;
+            const search = (document.getElementById('channel-search')?.value || '').toLowerCase();
+            let filtered = channels;
+            if (search) filtered = filtered.filter(c => c.name.toLowerCase().includes(search));
+
+            if (filtered.length === 0) {
+                container.innerHTML = '<div class="conversation-empty" style="padding:2rem;text-align:center;opacity:0.5;">No channels available</div>';
+                return;
+            }
+            const escHtml = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+            container.innerHTML = filtered.map(c => {
+                const active = chState.activeChannel === c.name ? ' active' : '';
+                const icon = c.name.charAt(0).toUpperCase();
+                const time = c.last_timestamp ? new Date(c.last_timestamp).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '';
+                const senderName = c.last_sender_name || c.last_sender_id || '';
+                const msgText = stripSenderPrefix(c.last_message, senderName);
+                const preview = c.last_message ? (senderName ? escHtml(senderName) + ': ' : '') + escHtml(msgText).slice(0, 40) : '<span style="opacity:0.5;">No messages yet</span>';
+                const badge = c.message_count > 0 ? '<div class="channel-badge">' + c.message_count + '</div>' : '';
+                const safeName = c.name.replace(/'/g, "\\'");
+                return '<div class="channel-item' + active + '" onclick="openChannel(\'' + safeName + '\')">'
+                    + '<div class="channel-avatar">' + escHtml(icon) + '</div>'
+                    + '<div class="channel-info"><div class="channel-name"># ' + escHtml(c.name) + '</div><div class="channel-preview">' + preview + '</div></div>'
+                    + '<div class="channel-meta"><div class="channel-time">' + time + '</div>' + badge + '</div>'
+                    + '</div>';
+            }).join('');
+        }
+
+        function openChannel(channelName) {
+            chState.activeChannel = channelName;
+            document.getElementById('channels-container')?.classList.add('channel-open');
+            document.getElementById('ch-header').style.display = '';
+            document.getElementById('ch-name').textContent = '# ' + channelName;
+            // Show compose only if auth allows
+            const canSend = !authState.required || authState.authenticated;
+            const inputEl = document.getElementById('ch-input');
+            if (inputEl) inputEl.style.display = canSend ? '' : 'none';
+            const infoBtn = document.getElementById('ch-info-btn');
+            if (infoBtn) infoBtn.style.display = canSend ? '' : 'none';
+            // Highlight active in sidebar
+            renderChannelList(chState.channels);
+            fetchChannelMessages(channelName);
+            stopChannelPoll();
+            chState.pollTimer = setInterval(() => fetchChannelMessages(channelName, true), 8000);
+        }
+
+        function closeChannel() {
+            document.getElementById('channels-container')?.classList.remove('channel-open');
+            chState.activeChannel = null;
+            stopChannelPoll();
+        }
+
+        function stopChannelPoll() {
+            if (chState.pollTimer) { clearInterval(chState.pollTimer); chState.pollTimer = null; }
+        }
+
+        function fetchChannelMessages(channelName, silent) {
+            const search = document.getElementById('ch-msg-search')?.value || '';
+            let url = '/channel-messages/' + encodeURIComponent(channelName);
+            if (search) url += '?search=' + encodeURIComponent(search);
+            fetch(url).then(r => r.json()).then(data => {
+                const msgs = data.messages || [];
+                const badge = document.getElementById('ch-msg-count');
+                if (badge) badge.textContent = msgs.length + ' messages';
+                renderChannelMessages(msgs);
+            }).catch(() => {});
+        }
+
+        function renderChannelMessages(messages) {
+            const container = document.getElementById('ch-messages');
+            if (!container) return;
+            if (messages.length === 0) {
+                container.innerHTML = '<div class="conversation-empty" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;opacity:0.4;"><i class="bi bi-chat-text" style="font-size:2.5rem;"></i><p style="margin-top:0.8rem;">No messages in this channel</p></div>';
+                return;
+            }
+            const escHtml = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+            let html = '';
+            let lastDate = '';
+            let lastSender = '';
+            messages.forEach(m => {
+                const dt = new Date(m.timestamp);
+                const dateStr = dt.toLocaleDateString();
+                if (dateStr !== lastDate) {
+                    html += '<div class="ch-date-sep">' + dateStr + '</div>';
+                    lastDate = dateStr;
+                    lastSender = '';
+                }
+                const cls = m.is_self ? 'ch-msg-self' : 'ch-msg-other';
+                const time = dt.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+                const showSender = !m.is_self && (m.from_name || m.from_id) !== lastSender;
+                const senderName = m.from_name || m.from_id;
+                const senderClickable = !m.is_self && senderName ? '<span style="cursor:pointer;text-decoration:underline dotted;text-underline-offset:2px;" onclick="filterByHopName(\'' + senderName.replace(/'/g, "\\'") + '\')">' + escHtml(senderName) + '</span>' : escHtml(senderName);
+                const senderHtml = showSender ? '<div class="ch-msg-sender">' + senderClickable + '</div>' : '';
+                if (!m.is_self) lastSender = m.from_name || m.from_id;
+                else lastSender = '';
+                const msgBody = stripSenderPrefix(m.message, m.from_name || m.from_id);
+                html += '<div class="ch-msg-bubble ' + cls + '">'
+                    + senderHtml
+                    + escHtml(msgBody)
+                    + '<div class="ch-msg-time">' + time + '</div>'
+                    + '</div>';
             });
-            loadChannelsForDevice(connected[0].device_id);
+            const wasAtBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - 30;
+            container.innerHTML = html;
+            if (wasAtBottom || !chState._rendered) container.scrollTop = container.scrollHeight;
+            chState._rendered = true;
         }
 
-        function loadChannelsForDevice(deviceId) {
-            const chSelect = document.getElementById('channel-select');
-            fetch(`/channels?device_id=${encodeURIComponent(deviceId)}`).then(r => r.json()).then(data => {
-                chSelect.innerHTML = '';
-                (data.channels || []).forEach(ch => {
-                    const opt = document.createElement('option');
-                    opt.value = ch.index;
-                    opt.textContent = ch.name || `Channel ${ch.index}`;
-                    chSelect.appendChild(opt);
-                });
-            }).catch(() => { chSelect.innerHTML = '<option>No channels</option>'; });
-        }
-
-        function sendChannelMessage(event) {
-            event.preventDefault();
+        function sendChannelReply() {
             requireAuth(() => {
-                const channel = document.getElementById('channel-select').value;
-                const message = document.getElementById('channel-message-text').value;
-                const deviceId = document.getElementById('channel-device-select').value;
-                if (!message) { showAlert('Enter a message', 'warning'); return; }
-
-                const btn = event.target.querySelector('button[type="submit"]');
-                const origHtml = btn.innerHTML;
-                btn.innerHTML = '<span class="loading-spinner"></span> Sending...';
-                btn.disabled = true;
-
+                const input = document.getElementById('ch-reply-input');
+                const message = input.value.trim();
+                if (!message || !chState.activeChannel) return;
+                const ch = chState.channels.find(c => c.name === chState.activeChannel);
+                if (!ch || ch.index < 0) { showAlert('Channel not available for sending — no device connected', 'warning'); return; }
+                const deviceId = ch.devices && ch.devices.length > 0 ? ch.devices[0] : ch.device_id || '';
+                input.value = '';
+                const counter = document.getElementById('ch-char-count');
+                if (counter) counter.textContent = '';
                 fetch('/send-channel', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({channel: parseInt(channel), message, device_id: deviceId})
+                    body: JSON.stringify({channel: ch.index, message, device_id: deviceId})
                 })
                 .then(r => { if (r.status === 401) { authState.authenticated = false; updateAuthUI(); throw new Error('Auth required'); } return r.json(); })
                 .then(data => {
                     if (data.success) {
-                        showAlert('Channel message sent!', 'success');
-                        document.getElementById('channel-message-text').value = '';
+                        fetchChannelMessages(chState.activeChannel);
+                        fetchChannelList();
                     } else {
-                        showAlert(data.error || 'Failed', 'danger');
+                        showAlert(data.error || 'Failed to send', 'danger');
                     }
                 })
-                .catch(err => showAlert(err.message, 'danger'))
-                .finally(() => { btn.innerHTML = origHtml; btn.disabled = false; });
+                .catch(err => showAlert(err.message, 'danger'));
             });
         }
 
-        // Wire up channel form + device change
+        function toggleChannelSearch() {
+            const el = document.getElementById('ch-msg-search');
+            if (!el) return;
+            if (el.style.display === 'none') { el.style.display = ''; el.focus(); }
+            else { el.style.display = 'none'; el.value = ''; if (chState.activeChannel) fetchChannelMessages(chState.activeChannel); }
+        }
+
+        function showChannelInfo() {
+            const ch = chState.channels.find(c => c.name === chState.activeChannel);
+            if (!ch) return;
+            const escHtml = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+            const devices = (ch.devices || []);
+            const canManage = !authState.required || authState.authenticated;
+            let deviceOpts = devices.map(d => '<option value="' + escHtml(d) + '">' + escHtml(d) + '</option>').join('');
+            let html = '<div style="text-align:left;">'
+                + '<p><strong># ' + escHtml(ch.name) + '</strong></p>'
+                + '<p style="font-size:0.85rem;margin:0.3rem 0;">Index: ' + ch.index + '<br>Devices: ' + (devices.join(', ') || 'none connected') + '<br>Messages: ' + ch.message_count + '</p>';
+            if (canManage && ch.index >= 0 && devices.length > 0) {
+                html += '<hr style="margin:0.6rem 0;">'
+                    + '<p style="font-size:0.85rem;font-weight:600;margin-bottom:0.4rem;">Rename Channel</p>'
+                    + '<div style="display:flex;gap:0.5rem;align-items:center;">'
+                    + '<select id="ch-manage-device" class="form-select form-control-modern" style="font-size:0.8rem;width:auto;">' + deviceOpts + '</select>'
+                    + '<input type="text" id="ch-manage-name" class="form-control form-control-modern" style="font-size:0.85rem;" value="' + escHtml(ch.name) + '" maxlength="31" placeholder="Channel name">'
+                    + '<button class="btn btn-sm btn-info" onclick="saveChannelName()">Save</button>'
+                    + '</div>'
+                    + '<p style="font-size:0.75rem;opacity:0.6;margin-top:0.3rem;">Prefix with # for public channels (auto-derived key)</p>';
+            }
+            html += '</div>';
+            showAlert(html, 'info');
+        }
+
+        function saveChannelName() {
+            const ch = chState.channels.find(c => c.name === chState.activeChannel);
+            if (!ch) return;
+            const newName = document.getElementById('ch-manage-name')?.value.trim();
+            const deviceId = document.getElementById('ch-manage-device')?.value;
+            if (!newName) { showAlert('Channel name cannot be empty', 'warning'); return; }
+            fetch('/set-channel', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({channel: ch.index, name: newName, device_id: deviceId})
+            })
+            .then(r => { if (r.status === 401) { authState.authenticated = false; updateAuthUI(); throw new Error('Auth required'); } return r.json(); })
+            .then(data => {
+                if (data.success) {
+                    showAlert('Channel renamed to <strong>' + newName + '</strong>', 'success');
+                    chState.activeChannel = newName;
+                    document.getElementById('ch-name').textContent = '# ' + newName;
+                    fetchChannelList();
+                } else {
+                    showAlert(data.error || 'Failed', 'danger');
+                }
+            })
+            .catch(err => showAlert(err.message, 'danger'));
+        }
+
+        // Wire up channel tab events
         document.addEventListener('DOMContentLoaded', function() {
-            const chForm = document.getElementById('channel-message-form');
-            if (chForm) chForm.addEventListener('submit', sendChannelMessage);
-            const devSel = document.getElementById('channel-device-select');
-            if (devSel) devSel.addEventListener('change', function() { loadChannelsForDevice(this.value); });
+            const chReply = document.getElementById('ch-reply-input');
+            if (chReply) {
+                chReply.addEventListener('keypress', function(e) { if (e.key === 'Enter') { e.preventDefault(); sendChannelReply(); } });
+                chReply.addEventListener('input', function() {
+                    const c = document.getElementById('ch-char-count');
+                    if (c) c.textContent = this.value.length + '/200';
+                });
+            }
+            const chSearch = document.getElementById('channel-search');
+            if (chSearch) chSearch.addEventListener('input', () => renderChannelList(chState.channels));
+            const chMsgSearch = document.getElementById('ch-msg-search');
+            if (chMsgSearch) {
+                let debounce = null;
+                chMsgSearch.addEventListener('input', function() {
+                    clearTimeout(debounce);
+                    debounce = setTimeout(() => { if (chState.activeChannel) fetchChannelMessages(chState.activeChannel); }, 400);
+                });
+            }
         });
 
         function startTraceroute(event) {
@@ -4089,44 +4300,41 @@
         }
 
         function updateAuthUI() {
-            const sendBanner = document.getElementById('send-auth-banner');
             const tracerouteBanner = document.getElementById('traceroute-auth-banner');
-            const sendTabItem = document.getElementById('send-tab-item');
             const tracerouteTabItem = document.getElementById('traceroute-tab-item');
             const settingsLogin = document.getElementById('settings-login-section');
-
             const floodTabItem = document.getElementById('flood-tab-item');
             const messagesTabItem = document.getElementById('messages-tab-item');
+            const channelsTabItem = document.getElementById('channels-tab-item');
+
+            // Channels tab always visible (viewing is public), send/manage gated in JS
+            if (channelsTabItem) channelsTabItem.style.display = '';
+            const chInput = document.getElementById('ch-input');
+            const chInfoBtn = document.getElementById('ch-info-btn');
+            const canSend = !authState.required || authState.authenticated;
+            if (chInput) chInput.style.display = (canSend && chState && chState.activeChannel) ? '' : 'none';
+            if (chInfoBtn) chInfoBtn.style.display = (canSend && chState && chState.activeChannel) ? '' : 'none';
 
             if (!authState.required) {
-                if (sendTabItem) sendTabItem.style.display = 'none';
                 if (tracerouteTabItem) tracerouteTabItem.style.display = 'none';
                 if (floodTabItem) floodTabItem.style.display = 'none';
                 if (messagesTabItem) messagesTabItem.style.display = 'none';
-                if (sendBanner) sendBanner.style.display = 'none';
                 if (tracerouteBanner) tracerouteBanner.style.display = 'none';
                 if (settingsLogin) settingsLogin.style.display = 'none';
             } else if (authState.authenticated) {
-                // Authenticated — show tabs, hide banners and login
-                if (sendTabItem) sendTabItem.style.display = '';
                 if (tracerouteTabItem) tracerouteTabItem.style.display = '';
                 if (messagesTabItem) messagesTabItem.style.display = '';
-                if (sendBanner) sendBanner.style.display = 'none';
                 if (tracerouteBanner) tracerouteBanner.style.display = 'none';
                 if (settingsLogin) settingsLogin.innerHTML = '<p class="text-success"><i class="bi bi-check-circle"></i> Authenticated — all features enabled.</p>';
-                // Show flood tab only if MeshCore devices are connected
                 if (floodTabItem) {
                     fetch('/meshcore/devices').then(r => r.json()).then(data => {
                         floodTabItem.style.display = (data.devices && data.devices.length > 0) ? '' : 'none';
                     }).catch(() => { floodTabItem.style.display = 'none'; });
                 }
             } else {
-                // Auth required but not authenticated — hide tabs, show login in settings
-                if (sendTabItem) sendTabItem.style.display = 'none';
                 if (tracerouteTabItem) tracerouteTabItem.style.display = 'none';
                 if (floodTabItem) floodTabItem.style.display = 'none';
                 if (messagesTabItem) messagesTabItem.style.display = 'none';
-                if (sendBanner) sendBanner.style.display = 'block';
                 if (tracerouteBanner) tracerouteBanner.style.display = 'block';
                 if (settingsLogin) settingsLogin.style.display = '';
             }

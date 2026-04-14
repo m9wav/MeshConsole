@@ -229,6 +229,25 @@ class MeshCoreBackend(MeshBackend):
         else:
             logger.info(f"Channel {channel_idx} message sent: {message}")
 
+    def set_channel(self, channel_idx: int, channel_name: str) -> bool:
+        """Set a channel name (and auto-derive key if name starts with #)."""
+        if not self._meshcore or not self._loop:
+            raise ConnectionError("Not connected")
+
+        future = asyncio.run_coroutine_threadsafe(
+            self._meshcore.commands.set_channel(channel_idx, channel_name),
+            self._loop,
+        )
+        result = future.result(timeout=30)
+        if result and getattr(result, 'type', None) == EventType.ERROR:
+            raise RuntimeError(f"Failed to set channel {channel_idx}: {getattr(result, 'payload', 'unknown')}")
+        # Refresh channel cache
+        if 0 <= channel_idx < len(self._channels):
+            self._channels[channel_idx]['channel_name'] = channel_name
+            self._channels[channel_idx]['_resolved_name'] = channel_name
+        logger.info(f"Channel {channel_idx} set to '{channel_name}' on {self.device_id}")
+        return True
+
     def get_channels(self) -> list[dict]:
         """Return the channel list with index and name."""
         result = []

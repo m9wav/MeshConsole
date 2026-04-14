@@ -1303,6 +1303,14 @@ class MeshtasticTool:
                     return [{'index': ch['index'], 'name': ch['name'], 'device_id': b.device_id} for ch in channels]
         return []
 
+    def set_channel(self, channel_idx: int, channel_name: str, device_id: str | None = None) -> bool:
+        """Set a channel name on a MeshCore device."""
+        for b in self.backends:
+            if b.is_connected and hasattr(b, 'set_channel'):
+                if device_id is None or b.device_id == device_id:
+                    return b.set_channel(channel_idx, channel_name)
+        raise ConnectionError("No connected MeshCore device")
+
     def send_traceroute(self, destination_id, hop_limit=10):
         """Route traceroute to the appropriate backend."""
         if destination_id.startswith('mc:'):

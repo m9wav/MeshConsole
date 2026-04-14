@@ -117,6 +117,7 @@ class DatabaseHandler:
             # These depend on backend column existing, so they live here after migration
             self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_packets_port_from_ts ON packets(port_name, from_id, timestamp DESC)')
             self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_packets_backend_ts ON packets(backend, timestamp DESC)')
+            self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_messages_to_id ON messages(to_id)')
             self.conn.commit()
         except sqlite3.Error as e:
             logger.error(f"Database migration error: {e}")
@@ -637,6 +638,69 @@ class DatabaseHandler:
                 return list(reversed(messages))  # chronological order
             except sqlite3.Error as e:
                 logger.error(f"Error fetching thread: {e}")
+                return []
+
+    def fetch_channel_conversations(self):
+        """Return channel threads with last message, count, and last sender."""
+        with self.lock:
+            try:
+                self.cursor.execute('''
+                    SELECT to_id,
+                           (SELECT message FROM messages m2
+                            WHERE m2.to_id = m1.to_id
+                            ORDER BY timestamp DESC LIMIT 1) AS last_msg,
+                           MAX(timestamp) AS last_ts,
+                           (SELECT from_id FROM messages m3
+                            WHERE m3.to_id = m1.to_id
+                            ORDER BY timestamp DESC LIMIT 1) AS last_sender,
+                           COUNT(*) AS msg_count
+                    FROM messages m1
+                    WHERE to_id LIKE 'channel:%' AND to_id != 'channel:'
+                    GROUP BY to_id
+                    ORDER BY last_ts DESC
+                ''')
+                rows = self.cursor.fetchall()
+                return [{
+                    'channel_name': row[0].replace('channel:', '', 1),
+                    'channel_key': row[0],
+                    'last_message': row[1] or '',
+                    'last_timestamp': row[2] or '',
+                    'last_sender_id': row[3] or '',
+                    'message_count': row[4],
+                } for row in rows]
+            except sqlite3.Error as e:
+                logger.error(f"Error fetching channel conversations: {e}")
+                return []
+
+    def fetch_channel_messages(self, channel_name: str, limit: int = 100, search: str | None = None):
+        """Return messages for a specific channel, chronological order."""
+        with self.lock:
+            try:
+                channel_key = f'channel:{channel_name}'
+                params: list = [channel_key]
+                search_clause = ''
+                if search:
+                    search_clause = ' AND message LIKE ?'
+                    params.append(f'%{search}%')
+                params.append(limit)
+                self.cursor.execute(f'''
+                    SELECT timestamp, from_id, to_id, message, backend, device_id
+                    FROM messages
+                    WHERE to_id = ?{search_clause}
+                    ORDER BY timestamp DESC
+                    LIMIT ?
+                ''', params)
+                rows = self.cursor.fetchall()
+                return list(reversed([{
+                    'timestamp': row[0],
+                    'from_id': row[1],
+                    'to_id': row[2],
+                    'message': row[3],
+                    'backend': row[4] if len(row) > 4 else '',
+                    'device_id': row[5] if len(row) > 5 else '',
+                } for row in rows]))
+            except sqlite3.Error as e:
+                logger.error(f"Error fetching channel messages: {e}")
                 return []
 
     def close(self):

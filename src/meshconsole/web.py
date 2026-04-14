@@ -498,13 +498,87 @@ def create_app(orchestrator):
 
     @app.route('/channels')
     def get_channels():
-        """Return available MeshCore channels."""
+        """Return available MeshCore channels with activity data."""
         try:
-            device_id = request.args.get('device_id', None)
-            channels = orchestrator.get_channels(device_id=device_id)
-            return jsonify({'channels': channels})
+            # Live channel configs from devices
+            live_channels = []
+            for b in orchestrator.backends:
+                if b.is_connected and hasattr(b, 'get_channels'):
+                    for ch in b.get_channels():
+                        ch['device_id'] = b.device_id
+                        live_channels.append(ch)
+
+            # Channel activity from database (cross-device merged)
+            db_channels = orchestrator.db_handler.fetch_channel_conversations()
+            activity_map = {c['channel_name']: c for c in db_channels}
+
+            # Merge: combine live config with DB activity, dedup by name
+            merged = {}
+            for lc in live_channels:
+                name = lc['name']
+                if name not in merged:
+                    act = activity_map.get(name, {})
+                    merged[name] = {
+                        'name': name,
+                        'index': lc['index'],
+                        'device_id': lc.get('device_id', ''),
+                        'devices': [lc.get('device_id', '')],
+                        'message_count': act.get('message_count', 0),
+                        'last_timestamp': act.get('last_timestamp', ''),
+                        'last_message': act.get('last_message', ''),
+                        'last_sender_id': act.get('last_sender_id', ''),
+                    }
+                else:
+                    merged[name]['devices'].append(lc.get('device_id', ''))
+
+            # Include DB-only channels (device disconnected but history exists)
+            for dbc in db_channels:
+                if dbc['channel_name'] not in merged:
+                    merged[dbc['channel_name']] = {
+                        'name': dbc['channel_name'],
+                        'index': -1,
+                        'device_id': '',
+                        'devices': [],
+                        'message_count': dbc.get('message_count', 0),
+                        'last_timestamp': dbc.get('last_timestamp', ''),
+                        'last_message': dbc.get('last_message', ''),
+                        'last_sender_id': dbc.get('last_sender_id', ''),
+                    }
+
+            # Sort by last activity, resolve sender names
+            channel_list = sorted(merged.values(),
+                                  key=lambda c: c.get('last_timestamp', ''),
+                                  reverse=True)
+            sender_ids = [c['last_sender_id'] for c in channel_list if c.get('last_sender_id')]
+            if sender_ids:
+                name_map = orchestrator.resolve_node_names_bulk(sender_ids)
+                for c in channel_list:
+                    sid = c.get('last_sender_id', '')
+                    c['last_sender_name'] = name_map.get(sid, sid)
+
+            return jsonify({'channels': channel_list})
         except Exception as e:
             return jsonify({'channels': [], 'error': str(e)}), 500
+
+    @app.route('/channel-messages/<path:channel_name>')
+    def get_channel_messages(channel_name):
+        """Return messages for a specific channel."""
+        try:
+            limit = int(request.args.get('limit', 100))
+            search = request.args.get('search', '').strip() or None
+            messages = orchestrator.db_handler.fetch_channel_messages(
+                channel_name, limit=limit, search=search
+            )
+            sender_ids = list(set(m['from_id'] for m in messages))
+            name_map = orchestrator.resolve_node_names_bulk(sender_ids) if sender_ids else {}
+            local_ids = set(orchestrator.get_local_node_ids())
+            for m in messages:
+                m['from_name'] = name_map.get(m['from_id'], m['from_id'])
+                m['is_self'] = m['from_id'] in local_ids
+            return jsonify({'channel_name': channel_name, 'messages': messages})
+        except Exception as e:
+            logger.error(f"Error fetching channel messages: {e}")
+            return jsonify({'messages': [], 'error': str(e)}), 500
 
     @app.route('/send-channel', methods=['POST'])
     @require_auth
@@ -523,6 +597,25 @@ def create_app(orchestrator):
             return jsonify({'success': True, 'message': 'Channel message sent'})
         except Exception as e:
             logger.error(f"Error sending channel message: {e}")
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    @app.route('/set-channel', methods=['POST'])
+    @require_auth
+    def set_channel_api():
+        """Set a MeshCore channel name."""
+        try:
+            data = request.get_json()
+            channel_idx = data.get('channel')
+            channel_name = data.get('name', '').strip()
+            device_id = data.get('device_id')
+
+            if channel_idx is None or not channel_name:
+                return jsonify({'success': False, 'error': 'Missing channel index or name'}), 400
+
+            orchestrator.set_channel(int(channel_idx), channel_name, device_id=device_id)
+            return jsonify({'success': True})
+        except Exception as e:
+            logger.error(f"Error setting channel: {e}")
             return jsonify({'success': False, 'error': str(e)}), 500
 
     # ── Conversations / Private Messaging ────────────────────
