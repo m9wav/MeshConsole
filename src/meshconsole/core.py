@@ -2086,7 +2086,7 @@ class MeshtasticTool:
 
         return hops
 
-    def get_mesh_graph_data(self, max_nodes: int = 0, min_count: int = 2, device_ids: list[str] | None = None, focus_node: str | None = None, max_hops: int = 3) -> dict:
+    def get_mesh_graph_data(self, max_nodes: int = 0, min_count: int = 2, device_ids: list[str] | None = None, focus_node: str | None = None, max_hops: int = 2) -> dict:
         """Return graph data for D3.js force-directed visualization.
 
         Reads from the RouteAnalyzer's adjacency cache and the node hash
@@ -2162,14 +2162,14 @@ class MeshtasticTool:
 
             if focus_hash and focus_hash in node_hashes:
                 # Build adjacency from edge_counts with per-node neighbour cap
-                # to prevent hash-collision explosion (top 6 strongest per hash)
+                # to prevent hash-collision explosion (top 4 strongest per hash)
                 adj: dict[str, list[str]] = {}
                 for (a, b), cnt in sorted(edge_counts.items(), key=lambda x: -x[1]):
                     adj.setdefault(a, [])
                     adj.setdefault(b, [])
-                    if len(adj[a]) < 6:
+                    if len(adj[a]) < 4:
                         adj[a].append(b)
-                    if len(adj[b]) < 6:
+                    if len(adj[b]) < 4:
                         adj[b].append(a)
 
                 visited = {focus_hash: 0}
@@ -2402,6 +2402,24 @@ class MeshtasticTool:
                 boosted = min(0.85, 0.7 + 0.05 * min(conns, 3))
                 if boosted > n.get('confidence', 0):
                     n['confidence'] = round(boosted, 2)
+
+        # Neighbourhood cleanup: remove unconnected ghost candidates.
+        # In neighbourhood mode, each hash expands to all its candidates but
+        # only the winner gets links.  Strip the rest to keep the graph clean.
+        # Only preserve the actual focus node, not all candidates sharing its hash.
+        if focus_node and hop_distances:
+            # Resolve which specific node ID is the focus
+            fn_lower = focus_node.strip().lower()
+            if len(fn_lower) >= 12 and all(c in '0123456789abcdef' for c in fn_lower[:12]):
+                focus_keep = {fn_lower[:12]}
+            else:
+                focus_keep = set(hash_to_node_ids.get(focus_hash, []))
+            connected_ids = set()
+            for l in links:
+                connected_ids.add(l['source'])
+                connected_ids.add(l['target'])
+            nodes = [n for n in nodes if n['id'] in connected_ids or n['id'] in focus_keep]
+            node_ids = {n['id'] for n in nodes}
 
         # Add local node(s) — connected to their nearest repeaters
         # Build per-device last_hop_counts so devices on different frequencies

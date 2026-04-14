@@ -837,7 +837,7 @@ def create_app(orchestrator):
             device_ids = request.args.get('device_ids', '')
             device_id_list = [d.strip() for d in device_ids.split(',') if d.strip()] if device_ids else None
             focus_node = request.args.get('focus_node', '').strip() or None
-            max_hops = int(request.args.get('max_hops', 3))
+            max_hops = int(request.args.get('max_hops', 2))
 
             cache_key = f"graph:{max_nodes}:{min_count}:{device_ids}:{focus_node}:{max_hops}"
             gen = orchestrator.route_analyzer._graph_generation
