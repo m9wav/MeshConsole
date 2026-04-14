@@ -1161,21 +1161,21 @@
                                 <span class="mesh-graph-legend-dot" style="background:#94a3b8;"></span> Unknown hash
                             </div>
                             <div class="mesh-graph-legend-item" id="graph-legend-focus" style="display:none;">
-                                <span class="mesh-graph-legend-dot" style="background:#ef4444;"></span> Focus
+                                <span class="mesh-graph-legend-dot" style="background:#10b981;"></span> Focus
                             </div>
                             <div class="mesh-graph-legend-item" id="graph-legend-hop1" style="display:none;">
-                                <span class="mesh-graph-legend-dot" style="background:#f97316;"></span> 1 hop
+                                <span class="mesh-graph-legend-dot" style="background:#3b82f6;"></span> 1 hop
                             </div>
                             <div class="mesh-graph-legend-item" id="graph-legend-hop2" style="display:none;">
-                                <span class="mesh-graph-legend-dot" style="background:#eab308;"></span> 2 hops
+                                <span class="mesh-graph-legend-dot" style="background:#f97316;"></span> 2 hops
                             </div>
                             <div class="mesh-graph-legend-item" id="graph-legend-hop3" style="display:none;">
-                                <span class="mesh-graph-legend-dot" style="background:#22c55e;"></span> 3+ hops
+                                <span class="mesh-graph-legend-dot" style="background:#94a3b8;"></span> 3+ hops
                             </div>
                         </div>
                         <div class="mesh-graph-stats" id="mesh-graph-stats" style="display:none;">
                             <span id="graph-neighbourhood-banner" style="display:none;"></span>
-                            <span id="graph-global-stats"><span id="graph-node-count">0</span> nodes, <span id="graph-link-count">0</span> links<span id="graph-total-info"></span></span>
+                            <span id="graph-global-stats"><span id="graph-node-count">0</span> nodes, <span id="graph-link-count">0</span> links<span id="graph-total-info"></span> <span style="opacity:0.5;margin-left:8px;">Double-click a node to explore its neighbourhood</span></span>
                         </div>
                         <div class="mesh-graph-tooltip" id="mesh-graph-tooltip"></div>
                     </div>
@@ -5229,11 +5229,10 @@
                 const hd = data.hop_distances;
                 if (hd && hd[d.id] !== undefined) {
                     const dist = hd[d.id];
-                    if (dist === 0) return '#ef4444';        // focus node, red
-                    if (dist === 1) return '#f97316';        // 1 hop, orange
-                    if (dist === 2) return '#eab308';        // 2 hops, yellow
-                    if (dist === 3) return '#22c55e';        // 3 hops, green
-                    return '#6366f1';                        // 4+ hops, indigo
+                    if (dist === 0) return '#10b981';        // focus node, green (same as local)
+                    if (dist === 1) return '#3b82f6';        // 1 hop, blue
+                    if (dist === 2) return '#f97316';        // 2 hops, orange
+                    return '#94a3b8';                        // 3+ hops, gray
                 }
                 if (d.confidence >= 0.7) return '#2563eb';   // high confidence, blue
                 if (d.confidence > 0) return '#d97706';      // ambiguous, orange
@@ -5280,7 +5279,7 @@
                     d3.select(this).attr('stroke', '#0f172a').attr('stroke-width', 3);
                     const hd = data.hop_distances;
                     const hopDist = hd ? hd[d.id] : undefined;
-                    const hopTag = hopDist === 0 ? ' <span style="color:#ef4444;font-weight:bold;">[Focus]</span>'
+                    const hopTag = hopDist === 0 ? ' <span style="color:#10b981;font-weight:bold;">[Focus]</span>'
                         : (hopDist > 0 ? ` <span style="opacity:0.6;">(${hopDist} hop${hopDist > 1 ? 's' : ''})</span>` : '');
                     tooltip.innerHTML = `
                         <strong>${d.name}</strong>${hopTag}<br>

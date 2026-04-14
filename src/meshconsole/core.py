@@ -2679,14 +2679,25 @@ class MeshtasticTool:
             'total_links': total_links,
         }
         if hop_distances:
+            # Resolve the actual focus node ID (not all candidates on the same hash)
+            fn_lower = focus_node.strip().lower() if focus_node else ''
+            if len(fn_lower) >= 12 and all(c in '0123456789abcdef' for c in fn_lower[:12]):
+                actual_focus_id = fn_lower[:12]
+            else:
+                focus_nids = hash_to_node_ids.get(focus_hash, [])
+                actual_focus_id = focus_nids[0] if focus_nids else None
+
             node_hop_map = {}
             for n in nodes:
-                dist = hop_distances.get(n.get('hash', ''), -1)
-                node_hop_map[n['id']] = dist
+                if n['id'] == actual_focus_id:
+                    node_hop_map[n['id']] = 0  # only the actual clicked node is hop 0
+                else:
+                    dist = hop_distances.get(n.get('hash', ''), -1)
+                    # Other nodes sharing the focus hash get hop 1, not hop 0
+                    node_hop_map[n['id']] = max(dist, 1) if dist == 0 else dist
             result['hop_distances'] = node_hop_map
             result['focus_hash'] = focus_hash
-            focus_nids = hash_to_node_ids.get(focus_hash, [])
-            result['focus_node_id'] = focus_nids[0] if focus_nids else None
+            result['focus_node_id'] = actual_focus_id
         return result
 
     # ── Flood advertisement ────────────────────────────────────
