@@ -655,7 +655,9 @@ class DatabaseHandler:
                             ORDER BY timestamp DESC LIMIT 1) AS last_sender,
                            COUNT(*) AS msg_count
                     FROM messages m1
-                    WHERE to_id LIKE 'channel:%' AND to_id != 'channel:'
+                    WHERE to_id LIKE 'channel:%'
+                      AND to_id != 'channel:'
+                      AND to_id NOT GLOB 'channel:ch[0-9]'
                     GROUP BY to_id
                     ORDER BY last_ts DESC
                 ''')
@@ -672,12 +674,13 @@ class DatabaseHandler:
                 logger.error(f"Error fetching channel conversations: {e}")
                 return []
 
-    def fetch_channel_messages(self, channel_name: str, limit: int = 100, search: str | None = None):
+    def fetch_channel_messages(self, channel_name: str, limit: int = 500, hours: int = 48, search: str | None = None):
         """Return messages for a specific channel, chronological order."""
         with self.lock:
             try:
                 channel_key = f'channel:{channel_name}'
-                params: list = [channel_key]
+                cutoff = (datetime.now() - timedelta(hours=hours)).isoformat()
+                params: list = [channel_key, cutoff]
                 search_clause = ''
                 if search:
                     search_clause = ' AND message LIKE ?'
@@ -686,7 +689,7 @@ class DatabaseHandler:
                 self.cursor.execute(f'''
                     SELECT timestamp, from_id, to_id, message, backend, device_id
                     FROM messages
-                    WHERE to_id = ?{search_clause}
+                    WHERE to_id = ? AND timestamp >= ?{search_clause}
                     ORDER BY timestamp DESC
                     LIMIT ?
                 ''', params)

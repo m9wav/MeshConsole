@@ -3092,7 +3092,7 @@
                 const senderName = c.last_sender_name || c.last_sender_id || '';
                 const msgText = stripSenderPrefix(c.last_message, senderName);
                 const preview = c.last_message ? (senderName ? escHtml(senderName) + ': ' : '') + escHtml(msgText).slice(0, 40) : '<span style="opacity:0.5;">No messages yet</span>';
-                const badge = c.message_count > 0 ? '<div class="channel-badge">' + c.message_count + '</div>' : '';
+                const badge = c.message_count > 0 ? '<div class="channel-badge">' + c.message_count.toLocaleString() + '</div>' : '';
                 const safeName = c.name.replace(/'/g, "\\'");
                 return '<div class="channel-item' + active + '" onclick="openChannel(\'' + safeName + '\')">'
                     + '<div class="channel-avatar">' + escHtml(icon) + '</div>'
@@ -3104,6 +3104,7 @@
 
         function openChannel(channelName) {
             chState.activeChannel = channelName;
+            chState._scrollToBottom = true;
             document.getElementById('channels-container')?.classList.add('channel-open');
             document.getElementById('ch-header').style.display = '';
             document.getElementById('ch-name').textContent = '# ' + channelName;
@@ -3137,7 +3138,7 @@
             fetch(url).then(r => r.json()).then(data => {
                 const msgs = data.messages || [];
                 const badge = document.getElementById('ch-msg-count');
-                if (badge) badge.textContent = msgs.length + ' messages';
+                if (badge) badge.textContent = msgs.length.toLocaleString() + ' messages (48h)';
                 renderChannelMessages(msgs);
             }).catch(() => {});
         }
@@ -3178,8 +3179,8 @@
             });
             const wasAtBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - 30;
             container.innerHTML = html;
-            if (wasAtBottom || !chState._rendered) container.scrollTop = container.scrollHeight;
-            chState._rendered = true;
+            if (wasAtBottom || chState._scrollToBottom) container.scrollTop = container.scrollHeight;
+            chState._scrollToBottom = false;
         }
 
         function sendChannelReply() {

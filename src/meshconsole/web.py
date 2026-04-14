@@ -564,10 +564,11 @@ def create_app(orchestrator):
     def get_channel_messages(channel_name):
         """Return messages for a specific channel."""
         try:
-            limit = int(request.args.get('limit', 100))
+            limit = int(request.args.get('limit', 500))
+            hours = int(request.args.get('hours', 48))
             search = request.args.get('search', '').strip() or None
             messages = orchestrator.db_handler.fetch_channel_messages(
-                channel_name, limit=limit, search=search
+                channel_name, limit=limit, hours=hours, search=search
             )
             sender_ids = list(set(m['from_id'] for m in messages))
             name_map = orchestrator.resolve_node_names_bulk(sender_ids) if sender_ids else {}
