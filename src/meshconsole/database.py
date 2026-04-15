@@ -146,9 +146,23 @@ class DatabaseHandler:
             logger.error(f"Database device_id migration error: {e}")
 
     def log_message(self, timestamp, from_id, to_id, port_name, message, backend='meshtastic', device_id=''):
-        """Log the message to the SQLite database."""
+        """Log the message to the SQLite database, skipping duplicates.
+
+        Deduplicates messages with the same from_id, to_id, and message text
+        within a 10-second window — handles the same broadcast being received
+        by multiple radios on different frequencies.
+        """
         with self.lock:
             try:
+                # Check for duplicate within 10s window
+                cutoff = (datetime.now() - timedelta(seconds=10)).isoformat()
+                self.cursor.execute(
+                    'SELECT 1 FROM messages WHERE from_id = ? AND to_id = ? AND message = ? AND timestamp >= ? LIMIT 1',
+                    (from_id, to_id, message, cutoff)
+                )
+                if self.cursor.fetchone():
+                    logger.debug("Duplicate message suppressed: %s from %s", message[:30], from_id)
+                    return
                 self.cursor.execute(
                     'INSERT INTO messages VALUES (?, ?, ?, ?, ?, ?, ?)',
                     (timestamp, from_id, to_id, port_name, message, backend, device_id)
@@ -641,19 +655,20 @@ class DatabaseHandler:
                 return []
 
     def fetch_channel_conversations(self):
-        """Return channel threads with last message, count, and last sender."""
+        """Return channel threads with last message, count (48h), and last sender."""
         with self.lock:
             try:
-                # Two fast queries instead of correlated subqueries
+                cutoff = (datetime.now() - timedelta(hours=48)).isoformat()
                 self.cursor.execute('''
                     SELECT to_id, COUNT(*) AS msg_count, MAX(timestamp) AS last_ts
                     FROM messages
                     WHERE to_id LIKE 'channel:%'
                       AND to_id != 'channel:'
                       AND to_id NOT GLOB 'channel:ch[0-9]'
+                      AND timestamp >= ?
                     GROUP BY to_id
                     ORDER BY last_ts DESC
-                ''')
+                ''', (cutoff,))
                 summary_rows = self.cursor.fetchall()
                 results = []
                 for row in summary_rows:

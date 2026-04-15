@@ -3114,6 +3114,10 @@
             document.getElementById('channels-container')?.classList.add('channel-open');
             document.getElementById('ch-header').style.display = '';
             document.getElementById('ch-name').textContent = '# ' + channelName;
+            // Show loading state
+            const msgContainer = document.getElementById('ch-messages');
+            msgContainer.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;opacity:0.5;"><div class="loading-spinner" style="width:24px;height:24px;margin-right:0.6rem;"></div> Loading messages...</div>';
+            document.getElementById('ch-msg-count').textContent = '';
             // Show compose only if auth allows
             const canSend = !authState.required || authState.authenticated;
             const inputEl = document.getElementById('ch-input');
@@ -3144,7 +3148,7 @@
             fetch(url).then(r => r.json()).then(data => {
                 const msgs = data.messages || [];
                 const badge = document.getElementById('ch-msg-count');
-                if (badge) badge.textContent = msgs.length.toLocaleString() + ' messages (48h)';
+                if (badge) badge.textContent = msgs.length.toLocaleString() + ' messages';
                 renderChannelMessages(msgs);
             }).catch(() => {});
         }

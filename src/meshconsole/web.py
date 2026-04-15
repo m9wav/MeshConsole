@@ -553,12 +553,13 @@ def create_app(orchestrator):
             channel_list = sorted(merged.values(),
                                   key=lambda c: c.get('last_timestamp', ''),
                                   reverse=True)
-            sender_ids = [c['last_sender_id'] for c in channel_list if c.get('last_sender_id')]
-            if sender_ids:
-                name_map = orchestrator.resolve_node_names_bulk(sender_ids)
-                for c in channel_list:
-                    sid = c.get('last_sender_id', '')
-                    c['last_sender_name'] = name_map.get(sid, sid)
+            # Only resolve node-style IDs, not bare names from MeshCore
+            node_ids = [c['last_sender_id'] for c in channel_list
+                        if c.get('last_sender_id', '').startswith(('mc:', '!'))]
+            name_map = orchestrator.resolve_node_names_bulk(list(set(node_ids))) if node_ids else {}
+            for c in channel_list:
+                sid = c.get('last_sender_id', '')
+                c['last_sender_name'] = name_map.get(sid, sid)
 
             resp_json = json.dumps({'channels': channel_list})
             _cache.set('channels-list', resp_json)
@@ -575,15 +576,18 @@ def create_app(orchestrator):
             search = request.args.get('search', '').strip() or None
 
             cache_key = f"ch-msgs:{channel_name}:{hours}:{search or ''}"
-            cached = _cache.get(cache_key, ttl=5)
+            cached = _cache.get(cache_key, ttl=15)
             if cached:
                 return Response(cached, mimetype='application/json')
 
             messages = orchestrator.db_handler.fetch_channel_messages(
                 channel_name, limit=limit, hours=hours, search=search
             )
-            sender_ids = list(set(m['from_id'] for m in messages))
-            name_map = orchestrator.resolve_node_names_bulk(sender_ids) if sender_ids else {}
+            # Only resolve IDs that look like node addresses (mc: or !)
+            # MeshCore channel senders like "Major Distraction" are already names
+            node_ids = [m['from_id'] for m in messages
+                        if m['from_id'].startswith(('mc:', '!', 'channel'))]
+            name_map = orchestrator.resolve_node_names_bulk(list(set(node_ids))) if node_ids else {}
             local_ids = set(orchestrator.get_local_node_ids())
             for m in messages:
                 m['from_name'] = name_map.get(m['from_id'], m['from_id'])
