@@ -3111,6 +3111,15 @@
             return /^Channel \d+$/i.test(name) || /^ch\d+$/i.test(name);
         }
 
+        function _backendBadge(backend) {
+            if (!backend) return '';
+            const colors = { meshcore: '#2563eb', meshtastic: '#10b981', both: '#8b5cf6' };
+            const labels = { meshcore: 'MeshCore', meshtastic: 'Meshtastic', both: 'Both' };
+            const color = colors[backend] || '#94a3b8';
+            const label = labels[backend] || backend;
+            return ' <span style="font-size:0.6rem;padding:0.1rem 0.35rem;border-radius:4px;background:' + color + ';color:#fff;vertical-align:middle;font-weight:500;">' + label + '</span>';
+        }
+
         function _renderChannelItem(c, escHtml) {
             const active = chState.activeChannel === c.name ? ' active' : '';
             const icon = c.name.charAt(0).toUpperCase();
@@ -3120,9 +3129,10 @@
             const preview = c.last_message ? (senderName ? escHtml(senderName) + ': ' : '') + escHtml(msgText).slice(0, 40) : '<span style="opacity:0.5;">No messages yet</span>';
             const badge = c.message_count > 0 ? '<div class="channel-badge">' + c.message_count.toLocaleString() + '</div>' : '';
             const safeName = c.name.replace(/'/g, "\\'");
+            const beBadge = _backendBadge(c.backend);
             return '<div class="channel-item' + active + '" onclick="openChannel(\'' + safeName + '\')">'
                 + '<div class="channel-avatar">' + escHtml(icon) + '</div>'
-                + '<div class="channel-info"><div class="channel-name"># ' + escHtml(c.name) + '</div><div class="channel-preview">' + preview + '</div></div>'
+                + '<div class="channel-info"><div class="channel-name"># ' + escHtml(c.name) + beBadge + '</div><div class="channel-preview">' + preview + '</div></div>'
                 + '<div class="channel-meta"><div class="channel-time">' + time + '</div>' + badge + '</div>'
                 + '</div>';
         }
@@ -3164,7 +3174,8 @@
             chState._scrollToBottom = true;
             document.getElementById('channels-container')?.classList.add('channel-open');
             document.getElementById('ch-header').style.display = '';
-            document.getElementById('ch-name').textContent = '# ' + channelName;
+            const ch = chState.channels.find(c => c.name === channelName);
+            document.getElementById('ch-name').innerHTML = '# ' + channelName + (ch ? _backendBadge(ch.backend) : '');
             // Show loading state
             const msgContainer = document.getElementById('ch-messages');
             msgContainer.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;opacity:0.5;"><div class="loading-spinner" style="width:24px;height:24px;margin-right:0.6rem;"></div> Loading messages...</div>';
@@ -3236,7 +3247,7 @@
                 html += '<div class="ch-msg-bubble ' + cls + '">'
                     + senderHtml
                     + rendered
-                    + '<div class="ch-msg-time">' + time + '</div>'
+                    + '<div class="ch-msg-time">' + time + (m.backend ? ' <span style="opacity:0.5;">' + (m.backend === 'meshcore' ? 'MC' : 'MT') + '</span>' : '') + '</div>'
                     + '</div>';
             });
             const wasAtBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - 30;

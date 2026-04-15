@@ -26,6 +26,8 @@ from functools import wraps
 from flask import Flask, render_template, jsonify, Response, request, session
 from flask_cors import CORS
 
+from meshconsole.models import BackendType
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_CONFIG_FILE = 'config.ini'
@@ -508,8 +510,10 @@ def create_app(orchestrator):
             live_channels = []
             for b in orchestrator.backends:
                 if b.is_connected and hasattr(b, 'get_channels'):
+                    btype = 'meshcore' if b.backend_type == BackendType.MESHCORE else 'meshtastic'
                     for ch in b.get_channels():
                         ch['device_id'] = b.device_id
+                        ch['backend'] = btype
                         live_channels.append(ch)
 
             # Channel activity from database (cross-device merged)
@@ -527,6 +531,7 @@ def create_app(orchestrator):
                         'index': lc['index'],
                         'device_id': lc.get('device_id', ''),
                         'devices': [lc.get('device_id', '')],
+                        'backend': lc.get('backend', ''),
                         'message_count': act.get('message_count', 0),
                         'last_timestamp': act.get('last_timestamp', ''),
                         'last_message': act.get('last_message', ''),
@@ -534,6 +539,9 @@ def create_app(orchestrator):
                     }
                 else:
                     merged[name]['devices'].append(lc.get('device_id', ''))
+                    # If multiple backends, mark as both
+                    if lc.get('backend') and lc['backend'] != merged[name].get('backend'):
+                        merged[name]['backend'] = 'both'
 
             # Include DB-only channels (device disconnected but history exists)
             for dbc in db_channels:
