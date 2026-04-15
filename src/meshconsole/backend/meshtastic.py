@@ -262,6 +262,20 @@ class MeshtasticBackend(MeshBackend):
             logger.error(f"Failed to send to channel {channel_idx}: {e}")
             raise
 
+    def _resolve_channel_name(self, channel_idx: int) -> str:
+        """Resolve a channel index to its name."""
+        try:
+            node = self._interface.getNode('^local') if self._interface else None
+            if node and hasattr(node, 'channels'):
+                for ch in node.channels:
+                    if ch.index == channel_idx:
+                        if ch.settings.name:
+                            return ch.settings.name
+                        return 'Primary' if channel_idx == 0 else f'Channel {channel_idx}'
+        except Exception:
+            pass
+        return 'Primary' if channel_idx == 0 else f'Channel {channel_idx}'
+
     def get_channels(self) -> list[dict]:
         """Return Meshtastic channel list."""
         channels = []
@@ -373,6 +387,14 @@ class MeshtasticBackend(MeshBackend):
             payload = decoded.get('payload', '')
 
             timestamp = datetime.now().isoformat()
+
+            # Map broadcast text messages to their channel name
+            # Meshtastic ^all messages are channel broadcasts
+            if port_name == 'TEXT_MESSAGE_APP' and to_id == '^all':
+                channel_idx = packet.get('channel', 0)
+                channel_name = self._resolve_channel_name(channel_idx)
+                to_id = f'channel:{channel_name}'
+                to_name = channel_name
 
             # Log message if available
             if message and self._db_handler:

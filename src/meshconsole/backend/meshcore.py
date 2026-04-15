@@ -129,6 +129,14 @@ class MeshCoreBackend(MeshBackend):
                         if sec.get('lat'): bc['lat'] = float(sec['lat'])
                         if sec.get('lon'): bc['lon'] = float(sec['lon'])
                         if sec.get('tx_power'): bc['tx_power'] = int(sec['tx_power'])
+                        # Channel config: channel_0 = #Public, channel_1 = ..., etc
+                        channels = {}
+                        for i in range(8):
+                            ch_val = sec.get(f'channel_{i}', '')
+                            if ch_val:
+                                channels[i] = ch_val
+                        if channels:
+                            bc['channels'] = channels
                         return bc if bc else None
                 except Exception as e:
                     logger.debug(f"Error reading bootstrap config: {e}")
@@ -450,6 +458,9 @@ class MeshCoreBackend(MeshBackend):
                     if 'tx_power' in bc:
                         await self._meshcore.commands.set_tx_power(bc['tx_power'])
                     await self._meshcore.commands.set_autoadd_config(1)
+                    for ch_idx, ch_name in bc.get('channels', {}).items():
+                        await self._meshcore.commands.set_channel(ch_idx, ch_name)
+                        logger.info(f"Bootstrap channel {ch_idx}: {ch_name}")
                     self._device_name = bc.get('name', self._device_id)
                     logger.info(f"Bootstrap config applied: {self._device_name}")
                 except Exception as e:
