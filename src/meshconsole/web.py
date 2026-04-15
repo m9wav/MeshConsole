@@ -500,6 +500,10 @@ def create_app(orchestrator):
     def get_channels():
         """Return available MeshCore channels with activity data."""
         try:
+            cached = _cache.get('channels-list', ttl=10)
+            if cached:
+                return Response(cached, mimetype='application/json')
+
             # Live channel configs from devices
             live_channels = []
             for b in orchestrator.backends:
@@ -556,7 +560,9 @@ def create_app(orchestrator):
                     sid = c.get('last_sender_id', '')
                     c['last_sender_name'] = name_map.get(sid, sid)
 
-            return jsonify({'channels': channel_list})
+            resp_json = json.dumps({'channels': channel_list})
+            _cache.set('channels-list', resp_json)
+            return Response(resp_json, mimetype='application/json')
         except Exception as e:
             return jsonify({'channels': [], 'error': str(e)}), 500
 
@@ -564,9 +570,15 @@ def create_app(orchestrator):
     def get_channel_messages(channel_name):
         """Return messages for a specific channel."""
         try:
-            limit = int(request.args.get('limit', 500))
+            limit = int(request.args.get('limit', 200))
             hours = int(request.args.get('hours', 48))
             search = request.args.get('search', '').strip() or None
+
+            cache_key = f"ch-msgs:{channel_name}:{hours}:{search or ''}"
+            cached = _cache.get(cache_key, ttl=5)
+            if cached:
+                return Response(cached, mimetype='application/json')
+
             messages = orchestrator.db_handler.fetch_channel_messages(
                 channel_name, limit=limit, hours=hours, search=search
             )
@@ -576,7 +588,9 @@ def create_app(orchestrator):
             for m in messages:
                 m['from_name'] = name_map.get(m['from_id'], m['from_id'])
                 m['is_self'] = m['from_id'] in local_ids
-            return jsonify({'channel_name': channel_name, 'messages': messages})
+            resp_json = json.dumps({'channel_name': channel_name, 'messages': messages})
+            _cache.set(cache_key, resp_json)
+            return Response(resp_json, mimetype='application/json')
         except Exception as e:
             logger.error(f"Error fetching channel messages: {e}")
             return jsonify({'messages': [], 'error': str(e)}), 500

@@ -1846,7 +1846,13 @@
                             _sseDebounce = null;
                             fetchChannelList();
                             if (chState.activeChannel) fetchChannelMessages(chState.activeChannel);
-                        }, 1500);
+                        }, 2000);
+                    } else if (activeTab.id === 'messages') {
+                        _sseDebounce = setTimeout(() => {
+                            _sseDebounce = null;
+                            fetchConversations();
+                            if (msgState.activeThread) fetchThread(msgState.activeThread);
+                        }, 2000);
                     }
                 };
                 es.onerror = function() {
@@ -3118,7 +3124,7 @@
             renderChannelList(chState.channels);
             fetchChannelMessages(channelName);
             stopChannelPoll();
-            chState.pollTimer = setInterval(() => fetchChannelMessages(channelName, true), 8000);
+            // No polling — SSE handles live updates for channels
         }
 
         function closeChannel() {
@@ -5048,7 +5054,7 @@
             fetchThread(nodeId);
             // Start polling
             stopThreadPoll();
-            msgState.pollTimer = setInterval(() => fetchThread(nodeId, true), 5000);
+            // No polling — SSE handles live updates for messages
         }
 
         function closeThread() {
