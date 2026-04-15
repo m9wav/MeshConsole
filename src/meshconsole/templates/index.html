@@ -377,7 +377,8 @@
         .theme-dark .channel-input input { background: #1e293b; border-color: #334155; color: #e2e8f0; }
         .theme-dark .ch-msg-other { background: #334155; color: #e2e8f0; }
         .theme-dark .channels-container { border-color: #334155; }
-        @media (max-width: 768px) { .channel-list { width: 100%; } .channel-view { display: none; } .channels-container.channel-open .channel-list { display: none; } .channels-container.channel-open .channel-view { display: flex; width: 100%; } }
+        @media (max-width: 768px) { .channel-list { width: 100%; } .channel-view { display: none; } .channels-container.channel-open .channel-list { display: none; } .channels-container.channel-open .channel-view { display: flex; width: 100%; } .channel-header { padding: 0.5rem 0.8rem; font-size: 0.85rem; } .ch-msg-bubble { max-width: 88%; font-size: 0.84rem; padding: 0.45rem 0.75rem; } .channel-messages { padding: 0.6rem 0.7rem; } .channel-input { padding: 0.5rem 0.6rem; } .channel-input input { font-size: 0.84rem; padding: 0.4rem 0.8rem; } .channel-input button { width: 34px; height: 34px; } .channel-item { padding: 0.6rem 0.8rem; } .channel-avatar { width: 36px; height: 36px; font-size: 0.95rem; } }
+        @media (max-width: 480px) { .ch-msg-bubble { max-width: 92%; } .channel-header .ms-auto { gap: 0.25rem !important; } .channel-header .btn { padding: 0.2rem 0.4rem; font-size: 0.75rem; } #ch-msg-search { width: 120px !important; } }
 
         .traceroute-hop {
             background: rgba(37, 99, 235, 0.1);
@@ -3072,11 +3073,58 @@
             }).catch(() => {});
         }
 
+        // Linkify URLs and convert newlines in message text (already HTML-escaped)
+        function linkifyText(text) {
+            // Convert newlines to <br>
+            text = text.replace(/\n/g, '<br>');
+            // Linkify URLs — the text is already escaped so &amp; etc are present
+            // Match http/https URLs in the escaped text
+            text = text.replace(/(https?:\/\/[^\s<&]+(?:&amp;[^\s<&]+)*)/g,
+                '<a href="#" class="ch-link" onclick="confirmExternalLink(\'$1\');return false;" style="color:inherit;text-decoration:underline;">$1</a>');
+            return text;
+        }
+
+        function confirmExternalLink(escapedUrl) {
+            // Unescape HTML entities back to real URL
+            const url = escapedUrl.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
+            const escHtml = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+            showAlert(
+                '<strong>External Link</strong><br>'
+                + '<p style="word-break:break-all;font-size:0.82rem;background:rgba(0,0,0,0.08);padding:0.4rem 0.6rem;border-radius:6px;margin:0.5rem 0;">' + escHtml(url) + '</p>'
+                + '<p style="font-size:0.82rem;opacity:0.7;margin-bottom:0.6rem;">Links from mesh networks may be untrusted. Proceed with caution.</p>'
+                + '<div style="display:flex;gap:0.5rem;justify-content:flex-end;">'
+                + '<button class="btn btn-sm btn-outline-secondary" onclick="this.closest(\'.alert\').remove()">Cancel</button>'
+                + '<button class="btn btn-sm btn-primary" onclick="window.open(\'' + escHtml(url).replace(/'/g, "\\'") + '\',\'_blank\');this.closest(\'.alert\').remove()">Open Link</button>'
+                + '</div>',
+                'warning'
+            );
+        }
+
         // Strip embedded "SenderName: " prefix from MeshCore channel messages
         function stripSenderPrefix(msg, senderName) {
             if (!msg || !senderName) return msg || '';
             const prefix = senderName + ': ';
             return msg.startsWith(prefix) ? msg.slice(prefix.length) : msg;
+        }
+
+        function _isDefaultChannelName(name) {
+            return /^Channel \d+$/i.test(name) || /^ch\d+$/i.test(name);
+        }
+
+        function _renderChannelItem(c, escHtml) {
+            const active = chState.activeChannel === c.name ? ' active' : '';
+            const icon = c.name.charAt(0).toUpperCase();
+            const time = c.last_timestamp ? new Date(c.last_timestamp).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '';
+            const senderName = c.last_sender_name || c.last_sender_id || '';
+            const msgText = stripSenderPrefix(c.last_message, senderName);
+            const preview = c.last_message ? (senderName ? escHtml(senderName) + ': ' : '') + escHtml(msgText).slice(0, 40) : '<span style="opacity:0.5;">No messages yet</span>';
+            const badge = c.message_count > 0 ? '<div class="channel-badge">' + c.message_count.toLocaleString() + '</div>' : '';
+            const safeName = c.name.replace(/'/g, "\\'");
+            return '<div class="channel-item' + active + '" onclick="openChannel(\'' + safeName + '\')">'
+                + '<div class="channel-avatar">' + escHtml(icon) + '</div>'
+                + '<div class="channel-info"><div class="channel-name"># ' + escHtml(c.name) + '</div><div class="channel-preview">' + preview + '</div></div>'
+                + '<div class="channel-meta"><div class="channel-time">' + time + '</div>' + badge + '</div>'
+                + '</div>';
         }
 
         function renderChannelList(channels) {
@@ -3090,22 +3138,25 @@
                 container.innerHTML = '<div class="conversation-empty" style="padding:2rem;text-align:center;opacity:0.5;">No channels available</div>';
                 return;
             }
-            const escHtml = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-            container.innerHTML = filtered.map(c => {
-                const active = chState.activeChannel === c.name ? ' active' : '';
-                const icon = c.name.charAt(0).toUpperCase();
-                const time = c.last_timestamp ? new Date(c.last_timestamp).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '';
-                const senderName = c.last_sender_name || c.last_sender_id || '';
-                const msgText = stripSenderPrefix(c.last_message, senderName);
-                const preview = c.last_message ? (senderName ? escHtml(senderName) + ': ' : '') + escHtml(msgText).slice(0, 40) : '<span style="opacity:0.5;">No messages yet</span>';
-                const badge = c.message_count > 0 ? '<div class="channel-badge">' + c.message_count.toLocaleString() + '</div>' : '';
-                const safeName = c.name.replace(/'/g, "\\'");
-                return '<div class="channel-item' + active + '" onclick="openChannel(\'' + safeName + '\')">'
-                    + '<div class="channel-avatar">' + escHtml(icon) + '</div>'
-                    + '<div class="channel-info"><div class="channel-name"># ' + escHtml(c.name) + '</div><div class="channel-preview">' + preview + '</div></div>'
-                    + '<div class="channel-meta"><div class="channel-time">' + time + '</div>' + badge + '</div>'
+            const escHtml = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+            const canManage = !authState.required || authState.authenticated;
+
+            // Split: active channels vs empty/default ones
+            const active = filtered.filter(c => c.message_count > 0 || !_isDefaultChannelName(c.name));
+            const inactive = filtered.filter(c => c.message_count === 0 && _isDefaultChannelName(c.name));
+
+            let html = active.map(c => _renderChannelItem(c, escHtml)).join('');
+
+            // Show inactive channels only when logged in (for management)
+            if (inactive.length > 0 && canManage) {
+                html += '<div style="padding:0.5rem 1rem;opacity:0.4;font-size:0.75rem;border-top:1px solid var(--border-color);cursor:pointer;" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display===\'none\'?\'\':\'none\';this.querySelector(\'i\').classList.toggle(\'bi-chevron-down\');this.querySelector(\'i\').classList.toggle(\'bi-chevron-right\');">'
+                    + '<i class="bi bi-chevron-right"></i> ' + inactive.length + ' unconfigured channel' + (inactive.length > 1 ? 's' : '')
+                    + '</div><div style="display:none;">'
+                    + inactive.map(c => _renderChannelItem(c, escHtml)).join('')
                     + '</div>';
-            }).join('');
+            }
+
+            container.innerHTML = html || '<div class="conversation-empty" style="padding:2rem;text-align:center;opacity:0.5;">No active channels</div>';
         }
 
         function openChannel(channelName) {
@@ -3181,9 +3232,10 @@
                 if (!m.is_self) lastSender = m.from_name || m.from_id;
                 else lastSender = '';
                 const msgBody = stripSenderPrefix(m.message, m.from_name || m.from_id);
+                const rendered = linkifyText(escHtml(msgBody));
                 html += '<div class="ch-msg-bubble ' + cls + '">'
                     + senderHtml
-                    + escHtml(msgBody)
+                    + rendered
                     + '<div class="ch-msg-time">' + time + '</div>'
                     + '</div>';
             });

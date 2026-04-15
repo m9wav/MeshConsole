@@ -287,6 +287,8 @@ class MeshCoreBackend(MeshBackend):
         result = []
         for idx, ch in enumerate(self._channels):
             name = ch.get('_resolved_name', '') or f'Channel {idx}'
+            if name.startswith('#'):
+                name = name[1:]
             result.append({'index': idx, 'name': name})
         return result
 
@@ -595,6 +597,10 @@ class MeshCoreBackend(MeshBackend):
             if channel_idx < len(self._channels)
             else f"ch{channel_idx}"
         )
+        # Strip # prefix — MeshCore uses it for auto-key derivation but
+        # the display name should be consistent (e.g. "Public" not "#Public")
+        if channel_name.startswith('#'):
+            channel_name = channel_name[1:]
         pubkey_prefix = payload.get("pubkey_prefix", "")
         text = payload.get("text", "")
 
