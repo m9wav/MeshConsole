@@ -571,7 +571,7 @@ def create_app(orchestrator):
     def get_channel_messages(channel_name):
         """Return messages for a specific channel."""
         try:
-            limit = int(request.args.get('limit', 200))
+            limit = int(request.args.get('limit', 1000))
             hours = int(request.args.get('hours', 48))
             search = request.args.get('search', '').strip() or None
 

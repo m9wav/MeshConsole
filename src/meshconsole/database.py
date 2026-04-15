@@ -692,7 +692,7 @@ class DatabaseHandler:
                 logger.error(f"Error fetching channel conversations: {e}")
                 return []
 
-    def fetch_channel_messages(self, channel_name: str, limit: int = 500, hours: int = 48, search: str | None = None):
+    def fetch_channel_messages(self, channel_name: str, limit: int = 1000, hours: int = 48, search: str | None = None):
         """Return messages for a specific channel, chronological order."""
         with self.lock:
             try:
