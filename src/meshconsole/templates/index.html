@@ -3351,8 +3351,8 @@
             let newName = document.getElementById('ch-manage-name')?.value.trim();
             const deviceId = document.getElementById('ch-manage-device')?.value;
             if (!newName) { showAlert('Channel name cannot be empty', 'warning'); return; }
-            // Auto-add # prefix for MeshCore public channels (key derivation)
-            const apiName = newName.startsWith('#') ? newName : '#' + newName;
+            // Send the name as-is — don't auto-add # prefix, it changes the encryption key
+            const apiName = newName;
             const displayName = newName.startsWith('#') ? newName.slice(1) : newName;
             const btn = document.querySelector('#ch-manage-overlay .btn-info');
             if (btn) { btn.disabled = true; btn.innerHTML = '<span class="loading-spinner" style="width:14px;height:14px;"></span> Saving...'; }
