@@ -3295,50 +3295,91 @@
         function showChannelInfo() {
             const ch = chState.channels.find(c => c.name === chState.activeChannel);
             if (!ch) return;
-            const escHtml = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+            const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
             const devices = (ch.devices || []);
             const canManage = !authState.required || authState.authenticated;
-            let deviceOpts = devices.map(d => '<option value="' + escHtml(d) + '">' + escHtml(d) + '</option>').join('');
-            let html = '<div style="text-align:left;">'
-                + '<p><strong># ' + escHtml(ch.name) + '</strong></p>'
-                + '<p style="font-size:0.85rem;margin:0.3rem 0;">Index: ' + ch.index + '<br>Devices: ' + (devices.join(', ') || 'none connected') + '<br>Messages: ' + ch.message_count + '</p>';
-            if (canManage && ch.index >= 0 && devices.length > 0) {
-                html += '<hr style="margin:0.6rem 0;">'
-                    + '<p style="font-size:0.85rem;font-weight:600;margin-bottom:0.4rem;">Rename Channel</p>'
-                    + '<div style="display:flex;gap:0.5rem;align-items:center;">'
-                    + '<select id="ch-manage-device" class="form-select form-control-modern" style="font-size:0.8rem;width:auto;">' + deviceOpts + '</select>'
-                    + '<input type="text" id="ch-manage-name" class="form-control form-control-modern" style="font-size:0.85rem;" value="' + escHtml(ch.name) + '" maxlength="31" placeholder="Channel name">'
-                    + '<button class="btn btn-sm btn-info" onclick="saveChannelName()">Save</button>'
+            const isMC = ch.backend === 'meshcore';
+
+            // Build modal overlay
+            let overlay = document.getElementById('ch-manage-overlay');
+            if (overlay) overlay.remove();
+            overlay = document.createElement('div');
+            overlay.id = 'ch-manage-overlay';
+            overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:10000;display:flex;align-items:center;justify-content:center;';
+            overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+
+            const deviceNames = devices.map(d => typeof d === 'object' ? (d.name || d.id) : d).join(', ') || 'none connected';
+            const deviceOpts = devices.filter(d => typeof d === 'object' && d.backend === 'meshcore')
+                .map(d => '<option value="' + esc(d.id) + '">' + esc(d.name || d.id) + '</option>').join('');
+
+            let manageHtml = '';
+            if (canManage && ch.index >= 0 && deviceOpts) {
+                manageHtml = '<div style="border-top:1px solid var(--border-color);padding-top:1rem;margin-top:1rem;">'
+                    + '<h6 style="margin-bottom:0.6rem;font-weight:600;">Rename Channel</h6>'
+                    + '<div style="margin-bottom:0.6rem;">'
+                    + '<label style="font-size:0.8rem;opacity:0.7;margin-bottom:0.25rem;display:block;">Device</label>'
+                    + '<select id="ch-manage-device" class="form-select form-control-modern" style="font-size:0.85rem;">' + deviceOpts + '</select>'
                     + '</div>'
-                    + '<p style="font-size:0.75rem;opacity:0.6;margin-top:0.3rem;">Prefix with # for public channels (auto-derived key)</p>';
+                    + '<div style="margin-bottom:0.6rem;">'
+                    + '<label style="font-size:0.8rem;opacity:0.7;margin-bottom:0.25rem;display:block;">Channel Name</label>'
+                    + '<input type="text" id="ch-manage-name" class="form-control form-control-modern" style="font-size:0.85rem;" value="' + esc(ch.name) + '" maxlength="31" placeholder="e.g. Public">'
+                    + '</div>'
+                    + '<div style="display:flex;gap:0.5rem;justify-content:flex-end;">'
+                    + '<button class="btn btn-sm btn-outline-secondary" onclick="document.getElementById(\'ch-manage-overlay\').remove()">Cancel</button>'
+                    + '<button class="btn btn-sm btn-info" onclick="saveChannelName()"><i class="bi bi-check-lg"></i> Save</button>'
+                    + '</div></div>';
             }
-            html += '</div>';
-            showAlert(html, 'info');
+
+            overlay.innerHTML = '<div style="background:var(--light-color);border-radius:16px;padding:1.5rem;max-width:420px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,0.3);">'
+                + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">'
+                + '<h5 style="margin:0;font-weight:700;"># ' + esc(ch.name) + ' ' + _backendBadge(ch.backend) + '</h5>'
+                + '<button onclick="document.getElementById(\'ch-manage-overlay\').remove()" style="border:none;background:none;font-size:1.3rem;cursor:pointer;opacity:0.5;"><i class="bi bi-x-lg"></i></button>'
+                + '</div>'
+                + '<div style="font-size:0.85rem;line-height:1.8;">'
+                + '<div><span style="opacity:0.6;">Channel Index:</span> ' + ch.index + '</div>'
+                + '<div><span style="opacity:0.6;">Devices:</span> ' + esc(deviceNames) + '</div>'
+                + '<div><span style="opacity:0.6;">Messages (48h):</span> ' + (ch.message_count || 0).toLocaleString() + '</div>'
+                + '</div>'
+                + manageHtml
+                + '</div>';
+            document.body.appendChild(overlay);
         }
 
         function saveChannelName() {
             const ch = chState.channels.find(c => c.name === chState.activeChannel);
             if (!ch) return;
-            const newName = document.getElementById('ch-manage-name')?.value.trim();
+            let newName = document.getElementById('ch-manage-name')?.value.trim();
             const deviceId = document.getElementById('ch-manage-device')?.value;
             if (!newName) { showAlert('Channel name cannot be empty', 'warning'); return; }
+            // Auto-add # prefix for MeshCore public channels (key derivation)
+            const apiName = newName.startsWith('#') ? newName : '#' + newName;
+            const displayName = newName.startsWith('#') ? newName.slice(1) : newName;
+            const btn = document.querySelector('#ch-manage-overlay .btn-info');
+            if (btn) { btn.disabled = true; btn.innerHTML = '<span class="loading-spinner" style="width:14px;height:14px;"></span> Saving...'; }
             fetch('/set-channel', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({channel: ch.index, name: newName, device_id: deviceId})
+                body: JSON.stringify({channel: ch.index, name: apiName, device_id: deviceId})
             })
             .then(r => { if (r.status === 401) { authState.authenticated = false; updateAuthUI(); throw new Error('Auth required'); } return r.json(); })
             .then(data => {
                 if (data.success) {
-                    showAlert('Channel renamed to <strong>' + newName + '</strong>', 'success');
-                    chState.activeChannel = newName;
-                    document.getElementById('ch-name').textContent = '# ' + newName;
+                    document.getElementById('ch-manage-overlay')?.remove();
+                    showAlert('Channel renamed to <strong>' + displayName + '</strong>', 'success');
+                    chState.activeChannel = displayName;
+                    const chObj = chState.channels.find(c => c.name === ch.name);
+                    if (chObj) chObj.name = displayName;
+                    document.getElementById('ch-name').innerHTML = '# ' + displayName + _backendBadge(ch.backend);
                     fetchChannelList();
                 } else {
                     showAlert(data.error || 'Failed', 'danger');
+                    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-check-lg"></i> Save'; }
                 }
             })
-            .catch(err => showAlert(err.message, 'danger'));
+            .catch(err => {
+                showAlert(err.message, 'danger');
+                if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-check-lg"></i> Save'; }
+            });
         }
 
         // Wire up channel tab events

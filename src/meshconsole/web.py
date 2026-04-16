@@ -511,8 +511,10 @@ def create_app(orchestrator):
             for b in orchestrator.backends:
                 if b.is_connected and hasattr(b, 'get_channels'):
                     btype = 'meshcore' if b.backend_type == BackendType.MESHCORE else 'meshtastic'
+                    dev_name = getattr(b, '_device_name', '') or b.device_id
                     for ch in b.get_channels():
                         ch['device_id'] = b.device_id
+                        ch['device_name'] = dev_name
                         ch['backend'] = btype
                         live_channels.append(ch)
 
@@ -530,7 +532,7 @@ def create_app(orchestrator):
                         'name': name,
                         'index': lc['index'],
                         'device_id': lc.get('device_id', ''),
-                        'devices': [lc.get('device_id', '')],
+                        'devices': [{'id': lc.get('device_id', ''), 'name': lc.get('device_name', lc.get('device_id', '')), 'backend': lc.get('backend', '')}],
                         'backend': lc.get('backend', ''),
                         'message_count': act.get('message_count', 0),
                         'last_timestamp': act.get('last_timestamp', ''),
@@ -538,8 +540,7 @@ def create_app(orchestrator):
                         'last_sender_id': act.get('last_sender_id', ''),
                     }
                 else:
-                    merged[name]['devices'].append(lc.get('device_id', ''))
-                    # If multiple backends, mark as both
+                    merged[name]['devices'].append({'id': lc.get('device_id', ''), 'name': lc.get('device_name', lc.get('device_id', '')), 'backend': lc.get('backend', '')})
                     if lc.get('backend') and lc['backend'] != merged[name].get('backend'):
                         merged[name]['backend'] = 'both'
 
