@@ -129,12 +129,13 @@ class MeshCoreBackend(MeshBackend):
                         if sec.get('lat'): bc['lat'] = float(sec['lat'])
                         if sec.get('lon'): bc['lon'] = float(sec['lon'])
                         if sec.get('tx_power'): bc['tx_power'] = int(sec['tx_power'])
-                        # Channel config: channel_0 = #Public, channel_1 = ..., etc
+                        # Channel config: channel_0 = Public, channel_0_secret = hex
                         channels = {}
                         for i in range(8):
                             ch_val = sec.get(f'channel_{i}', '')
                             if ch_val:
-                                channels[i] = ch_val
+                                ch_secret = sec.get(f'channel_{i}_secret', '')
+                                channels[i] = {'name': ch_val, 'secret': ch_secret}
                         if channels:
                             bc['channels'] = channels
                         return bc if bc else None
@@ -460,8 +461,12 @@ class MeshCoreBackend(MeshBackend):
                     if 'tx_power' in bc:
                         await self._meshcore.commands.set_tx_power(bc['tx_power'])
                     await self._meshcore.commands.set_autoadd_config(1)
-                    for ch_idx, ch_name in bc.get('channels', {}).items():
-                        await self._meshcore.commands.set_channel(ch_idx, ch_name)
+                    for ch_idx, ch_conf in bc.get('channels', {}).items():
+                        ch_name = ch_conf['name'] if isinstance(ch_conf, dict) else ch_conf
+                        ch_secret = None
+                        if isinstance(ch_conf, dict) and ch_conf.get('secret'):
+                            ch_secret = bytes.fromhex(ch_conf['secret'])
+                        await self._meshcore.commands.set_channel(ch_idx, ch_name, ch_secret)
                         logger.info(f"Bootstrap channel {ch_idx}: {ch_name}")
                     self._device_name = bc.get('name', self._device_id)
                     logger.info(f"Bootstrap config applied: {self._device_name}")
