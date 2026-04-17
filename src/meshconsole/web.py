@@ -518,35 +518,42 @@ def create_app(orchestrator):
                         ch['backend'] = btype
                         live_channels.append(ch)
 
-            # Channel activity from database (cross-device merged)
+            # Channel activity from database (split by backend)
             db_channels = orchestrator.db_handler.fetch_channel_conversations()
-            activity_map = {c['channel_name']: c for c in db_channels}
+            activity_map = {}
+            for c in db_channels:
+                # Key by name:backend for per-backend counts
+                key = f"{c['channel_name']}:{c.get('backend', '')}"
+                activity_map[key] = c
+                # Also store by name-only as fallback
+                if c['channel_name'] not in activity_map:
+                    activity_map[c['channel_name']] = c
 
-            # Merge: combine live config with DB activity, dedup by name
+            # Merge: combine same-backend devices, but keep different backends separate
             merged = {}
             for lc in live_channels:
                 name = lc['name']
-                if name not in merged:
-                    act = activity_map.get(name, {})
-                    merged[name] = {
+                btype = lc.get('backend', '')
+                key = f"{name}:{btype}"
+                if key not in merged:
+                    act = activity_map.get(f"{name}:{btype}", activity_map.get(name, {}))
+                    merged[key] = {
                         'name': name,
                         'index': lc['index'],
                         'device_id': lc.get('device_id', ''),
-                        'devices': [{'id': lc.get('device_id', ''), 'name': lc.get('device_name', lc.get('device_id', '')), 'backend': lc.get('backend', '')}],
-                        'backend': lc.get('backend', ''),
+                        'devices': [{'id': lc.get('device_id', ''), 'name': lc.get('device_name', lc.get('device_id', '')), 'backend': btype}],
+                        'backend': btype,
                         'message_count': act.get('message_count', 0),
                         'last_timestamp': act.get('last_timestamp', ''),
                         'last_message': act.get('last_message', ''),
                         'last_sender_id': act.get('last_sender_id', ''),
                     }
                 else:
-                    merged[name]['devices'].append({'id': lc.get('device_id', ''), 'name': lc.get('device_name', lc.get('device_id', '')), 'backend': lc.get('backend', '')})
-                    if lc.get('backend') and lc['backend'] != merged[name].get('backend'):
-                        merged[name]['backend'] = 'both'
+                    merged[key]['devices'].append({'id': lc.get('device_id', ''), 'name': lc.get('device_name', lc.get('device_id', '')), 'backend': btype})
 
             # Include DB-only channels (device disconnected but history exists)
             for dbc in db_channels:
-                if dbc['channel_name'] not in merged:
+                if not any(m['name'] == dbc['channel_name'] for m in merged.values()):
                     merged[dbc['channel_name']] = {
                         'name': dbc['channel_name'],
                         'index': -1,
@@ -583,14 +590,15 @@ def create_app(orchestrator):
             limit = int(request.args.get('limit', 1000))
             hours = int(request.args.get('hours', 48))
             search = request.args.get('search', '').strip() or None
+            backend = request.args.get('backend', '').strip() or None
 
-            cache_key = f"ch-msgs:{channel_name}:{hours}:{search or ''}"
+            cache_key = f"ch-msgs:{channel_name}:{hours}:{search or ''}:{backend or ''}"
             cached = _cache.get(cache_key, ttl=15)
             if cached:
                 return Response(cached, mimetype='application/json')
 
             messages = orchestrator.db_handler.fetch_channel_messages(
-                channel_name, limit=limit, hours=hours, search=search
+                channel_name, limit=limit, hours=hours, search=search, backend=backend
             )
             # Only resolve IDs that look like node addresses (mc: or !)
             # MeshCore channel senders like "Major Distraction" are already names

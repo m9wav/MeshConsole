@@ -655,44 +655,45 @@ class DatabaseHandler:
                 return []
 
     def fetch_channel_conversations(self):
-        """Return channel threads with last message, count (48h), and last sender."""
+        """Return channel threads split by backend, with count (48h) and last sender."""
         with self.lock:
             try:
                 cutoff = (datetime.now() - timedelta(hours=48)).isoformat()
                 self.cursor.execute('''
-                    SELECT to_id, COUNT(*) AS msg_count, MAX(timestamp) AS last_ts
+                    SELECT to_id, backend, COUNT(*) AS msg_count, MAX(timestamp) AS last_ts
                     FROM messages
                     WHERE to_id LIKE 'channel:%'
                       AND to_id != 'channel:'
                       AND to_id NOT GLOB 'channel:ch[0-9]'
                       AND timestamp >= ?
-                    GROUP BY to_id
+                    GROUP BY to_id, backend
                     ORDER BY last_ts DESC
                 ''', (cutoff,))
                 summary_rows = self.cursor.fetchall()
                 results = []
                 for row in summary_rows:
                     to_id = row[0]
-                    # Fetch last message with a simple indexed lookup
+                    backend = row[1] or ''
                     self.cursor.execute(
-                        'SELECT message, from_id FROM messages WHERE to_id = ? ORDER BY timestamp DESC LIMIT 1',
-                        (to_id,)
+                        'SELECT message, from_id FROM messages WHERE to_id = ? AND backend = ? ORDER BY timestamp DESC LIMIT 1',
+                        (to_id, backend)
                     )
                     last = self.cursor.fetchone()
                     results.append({
                         'channel_name': to_id.replace('channel:', '', 1),
                         'channel_key': to_id,
+                        'backend': backend,
                         'last_message': last[0] if last else '',
-                        'last_timestamp': row[2] or '',
+                        'last_timestamp': row[3] or '',
                         'last_sender_id': last[1] if last else '',
-                        'message_count': row[1],
+                        'message_count': row[2],
                     })
                 return results
             except sqlite3.Error as e:
                 logger.error(f"Error fetching channel conversations: {e}")
                 return []
 
-    def fetch_channel_messages(self, channel_name: str, limit: int = 1000, hours: int = 48, search: str | None = None):
+    def fetch_channel_messages(self, channel_name: str, limit: int = 1000, hours: int = 48, search: str | None = None, backend: str | None = None):
         """Return messages for a specific channel, chronological order."""
         with self.lock:
             try:
@@ -703,6 +704,9 @@ class DatabaseHandler:
                 if search:
                     search_clause = ' AND message LIKE ?'
                     params.append(f'%{search}%')
+                if backend:
+                    search_clause += ' AND backend = ?'
+                    params.append(backend)
                 params.append(limit)
                 self.cursor.execute(f'''
                     SELECT timestamp, from_id, to_id, message, backend, device_id

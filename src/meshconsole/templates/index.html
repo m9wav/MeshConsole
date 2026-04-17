@@ -3121,7 +3121,7 @@
         }
 
         function _renderChannelItem(c, escHtml) {
-            const active = chState.activeChannel === c.name ? ' active' : '';
+            const active = (chState.activeChannel === c.name && (!chState.activeBackend || chState.activeBackend === c.backend)) ? ' active' : '';
             const icon = c.name.charAt(0).toUpperCase();
             const time = c.last_timestamp ? new Date(c.last_timestamp).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '';
             const senderName = c.last_sender_name || c.last_sender_id || '';
@@ -3130,7 +3130,8 @@
             const badge = c.message_count > 0 ? '<div class="channel-badge">' + c.message_count.toLocaleString() + '</div>' : '';
             const safeName = c.name.replace(/'/g, "\\'");
             const beBadge = _backendBadge(c.backend);
-            return '<div class="channel-item' + active + '" onclick="openChannel(\'' + safeName + '\')">'
+            const safeBackend = (c.backend || '').replace(/'/g, "\\'");
+            return '<div class="channel-item' + active + '" onclick="openChannel(\'' + safeName + '\',\'' + safeBackend + '\')">'
                 + '<div class="channel-avatar">' + escHtml(icon) + '</div>'
                 + '<div class="channel-info"><div class="channel-name"># ' + escHtml(c.name) + beBadge + '</div><div class="channel-preview">' + preview + '</div></div>'
                 + '<div class="channel-meta"><div class="channel-time">' + time + '</div>' + badge + '</div>'
@@ -3169,12 +3170,13 @@
             container.innerHTML = html || '<div class="conversation-empty" style="padding:2rem;text-align:center;opacity:0.5;">No active channels</div>';
         }
 
-        function openChannel(channelName) {
+        function openChannel(channelName, backend) {
             chState.activeChannel = channelName;
+            chState.activeBackend = backend || null;
             chState._scrollToBottom = true;
             document.getElementById('channels-container')?.classList.add('channel-open');
             document.getElementById('ch-header').style.display = '';
-            const ch = chState.channels.find(c => c.name === channelName);
+            const ch = chState.channels.find(c => c.name === channelName && (!backend || c.backend === backend));
             document.getElementById('ch-name').innerHTML = '# ' + channelName + (ch ? _backendBadge(ch.backend) : '');
             // Show loading state
             const msgContainer = document.getElementById('ch-messages');
@@ -3188,7 +3190,7 @@
             if (infoBtn) infoBtn.style.display = canSend ? '' : 'none';
             // Highlight active in sidebar
             renderChannelList(chState.channels);
-            fetchChannelMessages(channelName);
+            fetchChannelMessages(channelName, false, backend);
             stopChannelPoll();
             // No polling — SSE handles live updates for channels
         }
@@ -3203,10 +3205,14 @@
             if (chState.pollTimer) { clearInterval(chState.pollTimer); chState.pollTimer = null; }
         }
 
-        function fetchChannelMessages(channelName, silent) {
+        function fetchChannelMessages(channelName, silent, backend) {
             const search = document.getElementById('ch-msg-search')?.value || '';
+            const be = backend || chState.activeBackend || '';
             let url = '/channel-messages/' + encodeURIComponent(channelName);
-            if (search) url += '?search=' + encodeURIComponent(search);
+            const params = [];
+            if (search) params.push('search=' + encodeURIComponent(search));
+            if (be) params.push('backend=' + encodeURIComponent(be));
+            if (params.length) url += '?' + params.join('&');
             fetch(url).then(r => r.json()).then(data => {
                 const msgs = data.messages || [];
                 const badge = document.getElementById('ch-msg-count');
