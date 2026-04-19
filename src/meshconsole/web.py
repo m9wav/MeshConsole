@@ -522,12 +522,8 @@ def create_app(orchestrator):
             db_channels = orchestrator.db_handler.fetch_channel_conversations()
             activity_map = {}
             for c in db_channels:
-                # Key by name:backend for per-backend counts
                 key = f"{c['channel_name']}:{c.get('backend', '')}"
                 activity_map[key] = c
-                # Also store by name-only as fallback
-                if c['channel_name'] not in activity_map:
-                    activity_map[c['channel_name']] = c
 
             # Merge: combine same-backend devices, but keep different backends separate
             merged = {}
@@ -536,7 +532,7 @@ def create_app(orchestrator):
                 btype = lc.get('backend', '')
                 key = f"{name}:{btype}"
                 if key not in merged:
-                    act = activity_map.get(f"{name}:{btype}", activity_map.get(name, {}))
+                    act = activity_map.get(f"{name}:{btype}", {})
                     merged[key] = {
                         'name': name,
                         'index': lc['index'],
@@ -553,12 +549,14 @@ def create_app(orchestrator):
 
             # Include DB-only channels (device disconnected but history exists)
             for dbc in db_channels:
-                if not any(m['name'] == dbc['channel_name'] for m in merged.values()):
-                    merged[dbc['channel_name']] = {
+                db_key = f"{dbc['channel_name']}:{dbc.get('backend', '')}"
+                if db_key not in merged and not any(m['name'] == dbc['channel_name'] and m.get('backend') == dbc.get('backend') for m in merged.values()):
+                    merged[db_key] = {
                         'name': dbc['channel_name'],
                         'index': -1,
                         'device_id': '',
                         'devices': [],
+                        'backend': dbc.get('backend', ''),
                         'message_count': dbc.get('message_count', 0),
                         'last_timestamp': dbc.get('last_timestamp', ''),
                         'last_message': dbc.get('last_message', ''),
