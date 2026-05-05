@@ -221,31 +221,82 @@ class MeshCoreBackend(MeshBackend):
     def send_message(self, destination: str, message: str) -> None:
         """Thread-safe message send via asyncio bridge.
 
-        Passes the full contact dict when available so meshcore_py has the
-        routing path for direct delivery. Falls back to hex prefix if the
-        contact is unknown.
+        Picks the strongest destination form available:
+          1. Device-loaded contact dict — has out_path / out_path_len so the
+             firmware can route directly. Best case.
+          2. Full 32-byte public key (hex string) — usually present in our
+             advert cache as ``_full_pub_key``. The lib treats it as direct
+             and lets the device's own routing find a path.
+          3. Hex prefix (typically 6 bytes) — last resort. The device must
+             already know the contact for this to work; if it doesn't,
+             ``send_msg_with_retry`` returns ERROR and trips meshcore_py's
+             KeyError('expected_ack') bug at messaging.py:131.
+
+        If we don't have a full key we refresh the device contacts once —
+        autoadd may have stored the contact since we last synced. Defensive
+        translation of the lib's KeyError keeps the failure user-readable.
         """
+        if not self._meshcore or not self._loop:
+            raise ConnectionError("Not connected")
+
         prefix = destination.removeprefix("mc:")
-        # Use full contact dict if we have it (includes routing path)
-        contact = self._contacts.get(prefix)
-        if contact and "public_key" in contact:
-            dest = contact
-            logger.debug(f"Sending via contact dict (public_key={contact['public_key'][:12]}...)")
+        dest, full_key = self._resolve_send_destination(prefix)
+
+        if isinstance(dest, str) and len(dest) < 64:
+            # No full key cached — ask the device for fresh contacts in case
+            # autoadd stored them since startup. One-shot, then retry.
+            try:
+                refresh = asyncio.run_coroutine_threadsafe(
+                    self._meshcore.commands.get_contacts(lastmod=0), self._loop,
+                )
+                refresh.result(timeout=5)
+                dest, full_key = self._resolve_send_destination(prefix)
+            except Exception as e:
+                logger.debug(f"Contact refresh failed for {prefix}: {e}")
+
+        if isinstance(dest, dict):
+            logger.debug(f"Sending to {prefix} via contact dict (out_path_len={dest.get('out_path_len')})")
+        elif isinstance(dest, str) and len(dest) >= 64:
+            logger.debug(f"Sending to {prefix} via full pubkey ({dest[:12]}...)")
         else:
-            dest = prefix
-            logger.debug(f"Sending via hex prefix: {prefix}")
+            logger.warning(f"Sending to {prefix} with hex prefix only — full key unknown, may fail")
 
         future = asyncio.run_coroutine_threadsafe(
             self._meshcore.commands.send_msg_with_retry(dest, message),
             self._loop,
         )
-        result = future.result(timeout=30)
+        try:
+            result = future.result(timeout=30)
+        except KeyError as e:
+            if str(e) == "'expected_ack'":
+                raise RuntimeError(
+                    f"Device rejected send to {destination} (unknown contact, no path, or queue full)"
+                ) from e
+            raise
         if result is None:
             logger.warning(f"Message to {destination} sent but no ACK received (may still arrive)")
         elif getattr(result, 'type', None) == EventType.ERROR:
-            logger.error(f"Failed to send to {destination}: {getattr(result, 'payload', 'unknown error')}")
+            payload = getattr(result, 'payload', 'unknown error')
+            logger.error(f"Failed to send to {destination}: {payload}")
+            raise RuntimeError(f"Send to {destination} failed: {payload}")
         else:
             logger.info(f"Message delivered to {destination}: {message}")
+
+    def _resolve_send_destination(self, prefix: str):
+        """Return (dest, full_key) for ``send_msg_with_retry``.
+
+        ``dest`` is whichever form we have: contact dict > full hex key > prefix.
+        ``full_key`` is the 64-char hex pubkey when known, else "".
+        """
+        contact = self._contacts.get(prefix)
+        if contact and contact.get("public_key") and "out_path_len" in contact:
+            return contact, contact["public_key"]
+        full_key = ""
+        if contact:
+            full_key = contact.get("public_key") or contact.get("_full_pub_key") or ""
+        if len(full_key) >= 64:
+            return full_key, full_key
+        return prefix, ""
 
     def send_channel_message(self, channel_idx: int, message: str) -> None:
         """Send a message to a MeshCore channel by index."""
