@@ -1945,25 +1945,25 @@ class MeshtasticTool:
         """Return (lookup, local_coords_list) for ``decode_route``.
 
         ``lookup`` maps a hash byte (or hash_size bytes hex) to candidate node
-        names eligible to be a real hop in our local mesh. Eligibility:
+        names eligible to be a real hop in our local mesh.
 
-          1. Live in our device's ``_contacts`` cache AND we've heard repeated
-             NODEINFO from it (count ≥ HOP_MIN_NODEINFO_COUNT) — strong local
-             signal.
-          2. Latest NODEINFO arrived via a short path
-             (path_len ≤ HOP_MAX_PATH_LEN) — the radio heard it within
-             reasonable hop range.
-          3. Has valid GPS within HOP_GEO_RANGE_KM of any of our local nodes
-             — geographic proof of locality.
+        Eligibility uses GPS as authoritative when valid, and falls back to
+        reception evidence when GPS is missing:
 
-        Candidates failing all three checks are dropped. This stops a single
-        flooded advert from a far-away node (e.g. an "andypager" 16 hops
-        away with bogus 0,0 GPS) from monopolising a hash byte and getting
-        confidently misattributed to every path containing that byte.
+          • Valid GPS + within HOP_GEO_RANGE_KM of any local node → accept.
+          • Valid GPS + outside the range → reject. Reception count cannot
+            override geography: a node 250 km away that sends many adverts
+            still racks up high count via flooding, but it is not a real
+            hop in our local mesh.
+          • Valid GPS + no local-node reference → charitably accept.
+          • No GPS (or bogus 0,0) → use path_len ≤ HOP_MAX_PATH_LEN or
+            count ≥ HOP_MIN_NODEINFO_COUNT as a locality proxy.
+          • No GPS + no other evidence → reject (flood-only stranger).
 
-        When local-node coords are unknown we skip the geographic test but
-        still apply (1) and (2) — count + path_len alone are enough to
-        suppress most flood-only strangers.
+        This stops both single-flood strangers (andypager: 1 advert,
+        16-hop path, bogus GPS) and high-volume distant flooders (BAT11:
+        18 adverts but 250 km away with valid GPS) from poisoning hash
+        buckets in route trails.
         """
         local_coords_list: list[tuple] = []
         for b in self.backends:
@@ -1982,21 +1982,24 @@ class MeshtasticTool:
             ev = evidence.get(full_key_lower, {})
             count = ev.get('count', 0)
             path_len = ev.get('path_len')
-            # (1) recurrent participant we know directly
-            if in_local_contacts and count >= self._HOP_MIN_NODEINFO_COUNT:
+            has_gps = ev.get('has_gps', False)
+
+            # GPS is authoritative when available — a far-away node can rack
+            # up high reception count via flooding but is still far away.
+            if has_gps:
+                c = self.route_analyzer._geo.get_coords(name)
+                if c and local_coords_list:
+                    return any(
+                        haversine(lc[0], lc[1], c[0], c[1]) <= self._HOP_GEO_RANGE_KM
+                        for lc in local_coords_list
+                    )
+                return True  # GPS but no local reference — charitable
+
+            # No GPS: fall back to reception evidence.
+            if path_len is not None and path_len <= self._HOP_MAX_PATH_LEN:
                 return True
             if count >= self._HOP_MIN_NODEINFO_COUNT:
                 return True
-            # (2) heard within reasonable hop range
-            if path_len is not None and path_len <= self._HOP_MAX_PATH_LEN:
-                return True
-            # (3) geographic proof of locality
-            if local_coords_list:
-                c = self.route_analyzer._geo.get_coords(name)
-                if c:
-                    for lc in local_coords_list:
-                        if haversine(lc[0], lc[1], c[0], c[1]) <= self._HOP_GEO_RANGE_KM:
-                            return True
             return False
 
         lookup: dict[str, list[str]] = {}
