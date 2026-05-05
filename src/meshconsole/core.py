@@ -1880,18 +1880,24 @@ class MeshtasticTool:
         if self._nodeinfo_parsed_cache and (now - self._nodeinfo_parsed_cache[0]) < self._nodeinfo_cache_ttl:
             return self._nodeinfo_parsed_cache[1]
 
-        # Get raw rows (may also refresh _nodeinfo_cache)
+        # Get raw rows (may also refresh _nodeinfo_cache).
+        # Per from_id, only the latest NODEINFO is meaningful — older receptions
+        # contain stale name/key data and their raw_packet bytes vary per
+        # reception (rxRssi/rxSnr/etc), so SELECT DISTINCT on raw_packet was a
+        # full scan that deduped nothing. GROUP BY from_id with MAX(timestamp)
+        # uses the (port_name, from_id, timestamp) index and SQLite's
+        # documented bare-column-with-MAX rule to pick the newest row per node.
         if self._nodeinfo_cache and (now - self._nodeinfo_cache[0]) < self._nodeinfo_cache_ttl:
             db_rows = self._nodeinfo_cache[1]
         else:
             try:
                 with self.db_handler.lock:
                     self.db_handler.cursor.execute(
-                        "SELECT DISTINCT raw_packet FROM packets "
+                        "SELECT raw_packet, MAX(timestamp) FROM packets "
                         "WHERE port_name IN ('NODEINFO','NODEINFO_APP') "
-                        "AND backend='meshcore' ORDER BY timestamp DESC"
+                        "AND backend='meshcore' GROUP BY from_id"
                     )
-                    db_rows = self.db_handler.cursor.fetchall()
+                    db_rows = [(row[0],) for row in self.db_handler.cursor.fetchall()]
                 self._nodeinfo_cache = (now, db_rows)
             except Exception:
                 db_rows = []
