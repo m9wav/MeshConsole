@@ -734,8 +734,10 @@ class MeshtasticTool:
         self._nodeinfo_cache = None   # (timestamp, rows) tuple for decode_route
         self._nodeinfo_cache_ttl = 10  # seconds
         self._nodeinfo_parsed_cache = None  # (timestamp, [{key, name}]) parsed NODEINFO entries
+        self._nodeinfo_evidence_cache = None  # (timestamp, {full_key: {count, min_path_len}})
         self._decode_route_cache: dict[tuple, list[dict]] = {}
         self._decode_route_gen: int = -1  # last generation seen
+        self._decode_route_lookup: tuple | None = None  # (hash_size, lookup, has_coords) for current gen
         self._sse_subscribers: list[queue.Queue] = []
         self._sse_lock = threading.Lock()
         self.traceroute_completed = False
@@ -1871,7 +1873,11 @@ class MeshtasticTool:
         return status_list
 
     def _get_nodeinfo_entries(self):
-        """Return cached, pre-parsed NODEINFO entries: [{full_key, name}].
+        """Return cached, pre-parsed NODEINFO entries.
+
+        Each entry is ``{full_key, name, path_len, has_gps}``. ``path_len`` is
+        from the latest received NODEINFO (None if not present); ``has_gps``
+        flags whether the latest advert carried valid (non-0,0) coords.
 
         Caches both the raw DB query (avoiding repeated SELECTs) and the
         parsed JSON (avoiding repeated json.loads on every call).
@@ -1909,12 +1915,171 @@ class MeshtasticTool:
                 full_key = raw.get('public_key', '') or raw.get('adv_key', '')
                 name = raw.get('adv_name', '')
                 if full_key and name:
-                    entries.append({'full_key': full_key, 'name': name})
-            except (json.JSONDecodeError, TypeError):
+                    lat = raw.get('adv_lat')
+                    lon = raw.get('adv_lon')
+                    has_gps = (
+                        lat is not None and lon is not None
+                        and abs(float(lat)) > 0.01 and abs(float(lon)) > 0.01
+                    )
+                    entries.append({
+                        'full_key': full_key,
+                        'name': name,
+                        'path_len': raw.get('path_len'),
+                        'has_gps': has_gps,
+                    })
+            except (json.JSONDecodeError, TypeError, ValueError):
                 pass
 
         self._nodeinfo_parsed_cache = (now, entries)
         return entries
+
+    # Eligibility thresholds for hop-resolution candidates.
+    # A candidate enters the lookup only if at least one of these holds —
+    # otherwise it's treated as a flood-only stranger that would poison the
+    # hash bucket. See _build_route_lookup() for the rationale.
+    _HOP_MIN_NODEINFO_COUNT = 3
+    _HOP_MAX_PATH_LEN = 4
+    _HOP_GEO_RANGE_KM = 150
+
+    def _build_route_lookup(self, hash_size: int) -> tuple[dict, tuple]:
+        """Return (lookup, local_coords_list) for ``decode_route``.
+
+        ``lookup`` maps a hash byte (or hash_size bytes hex) to candidate node
+        names eligible to be a real hop in our local mesh. Eligibility:
+
+          1. Live in our device's ``_contacts`` cache AND we've heard repeated
+             NODEINFO from it (count ≥ HOP_MIN_NODEINFO_COUNT) — strong local
+             signal.
+          2. Latest NODEINFO arrived via a short path
+             (path_len ≤ HOP_MAX_PATH_LEN) — the radio heard it within
+             reasonable hop range.
+          3. Has valid GPS within HOP_GEO_RANGE_KM of any of our local nodes
+             — geographic proof of locality.
+
+        Candidates failing all three checks are dropped. This stops a single
+        flooded advert from a far-away node (e.g. an "andypager" 16 hops
+        away with bogus 0,0 GPS) from monopolising a hash byte and getting
+        confidently misattributed to every path containing that byte.
+
+        When local-node coords are unknown we skip the geographic test but
+        still apply (1) and (2) — count + path_len alone are enough to
+        suppress most flood-only strangers.
+        """
+        local_coords_list: list[tuple] = []
+        for b in self.backends:
+            if b.backend_type != BackendType.MESHCORE:
+                continue
+            dn = getattr(b, '_device_name', None)
+            if dn:
+                c = self.route_analyzer._geo.get_coords(dn)
+                if c:
+                    local_coords_list.append(c)
+        haversine = self.route_analyzer._geo._haversine
+
+        evidence = self._get_nodeinfo_evidence()
+
+        def _eligible(full_key_lower: str, name: str, in_local_contacts: bool) -> bool:
+            ev = evidence.get(full_key_lower, {})
+            count = ev.get('count', 0)
+            path_len = ev.get('path_len')
+            # (1) recurrent participant we know directly
+            if in_local_contacts and count >= self._HOP_MIN_NODEINFO_COUNT:
+                return True
+            if count >= self._HOP_MIN_NODEINFO_COUNT:
+                return True
+            # (2) heard within reasonable hop range
+            if path_len is not None and path_len <= self._HOP_MAX_PATH_LEN:
+                return True
+            # (3) geographic proof of locality
+            if local_coords_list:
+                c = self.route_analyzer._geo.get_coords(name)
+                if c:
+                    for lc in local_coords_list:
+                        if haversine(lc[0], lc[1], c[0], c[1]) <= self._HOP_GEO_RANGE_KM:
+                            return True
+            return False
+
+        lookup: dict[str, list[str]] = {}
+        seen_keys: set[str] = set()
+
+        # Source 1: live MeshCore contacts (always eligible if device knows
+        # them AND evidence supports — autoadd alone isn't enough since the
+        # firmware adds every received advert).
+        for backend in self.backends:
+            if backend.backend_type != BackendType.MESHCORE:
+                continue
+            for prefix, contact in backend._contacts.items():
+                full_key = contact.get('_full_pub_key', '') or contact.get('public_key', '')
+                if not full_key or len(full_key) < hash_size * 2:
+                    continue
+                fk_lower = full_key.lower()
+                seen_keys.add(fk_lower)
+                name = contact.get('adv_name', '') or prefix
+                if not _eligible(fk_lower, name, in_local_contacts=True):
+                    continue
+                h = full_key[:hash_size * 2].lower()
+                lookup.setdefault(h, []).append(name)
+
+        # Source 2: historical NODEINFO packets (fills gaps for nodes the
+        # device hasn't autoadded — same eligibility gate applies).
+        for entry in self._get_nodeinfo_entries():
+            full_key = entry['full_key']
+            fk_lower = full_key.lower()
+            if fk_lower in seen_keys:
+                continue
+            if len(full_key) < hash_size * 2:
+                continue
+            seen_keys.add(fk_lower)
+            if not _eligible(fk_lower, entry['name'], in_local_contacts=False):
+                continue
+            h = full_key[:hash_size * 2].lower()
+            lookup.setdefault(h, []).append(entry['name'])
+
+        return lookup, tuple(local_coords_list)
+
+    def _get_nodeinfo_evidence(self) -> dict[str, dict]:
+        """Per-node evidence used to gate route-hop candidate eligibility.
+
+        Returns ``{full_key_lower: {'count': int, 'min_path_len': int|None}}``.
+
+        ``count`` is the number of NODEINFO packets we've received from that
+        node. ``min_path_len`` is the shortest path the advert traversed to
+        reach us — large path_len means the sender is many hops away.
+
+        Used by ``decode_route`` to suppress flood-only strangers (single
+        advert, long path) from poisoning the hash-byte → node mapping.
+        Cached for ``_nodeinfo_cache_ttl`` seconds.
+        """
+        now = time.time()
+        if self._nodeinfo_evidence_cache and (now - self._nodeinfo_evidence_cache[0]) < self._nodeinfo_cache_ttl:
+            return self._nodeinfo_evidence_cache[1]
+
+        evidence: dict[str, dict] = {}
+        try:
+            with self.db_handler.lock:
+                self.db_handler.cursor.execute(
+                    "SELECT from_id, COUNT(*) FROM packets "
+                    "WHERE port_name IN ('NODEINFO','NODEINFO_APP') "
+                    "AND backend='meshcore' GROUP BY from_id"
+                )
+                count_by_from = dict(self.db_handler.cursor.fetchall())
+        except Exception:
+            count_by_from = {}
+
+        for entry in self._get_nodeinfo_entries():
+            full_key = (entry.get('full_key') or '').lower()
+            if not full_key:
+                continue
+            from_id = f"mc:{full_key[:12]}"
+            evidence[full_key] = {
+                'count': count_by_from.get(from_id, 0),
+                'path_len': entry.get('path_len'),
+                'has_gps': entry.get('has_gps', False),
+                'name': entry.get('name', ''),
+            }
+
+        self._nodeinfo_evidence_cache = (now, evidence)
+        return evidence
 
     def _build_device_edge_counts(self, device_ids: list[str]) -> tuple[dict, set]:
         """Build edge counts from packets belonging to specific devices.
@@ -1991,38 +2156,18 @@ class MeshtasticTool:
         if gen != self._decode_route_gen:
             self._decode_route_cache.clear()
             self._decode_route_gen = gen
+            self._decode_route_lookup = None
         cache_key = (path_hex, hash_size)
         cached = self._decode_route_cache.get(cache_key)
         if cached is not None:
             return cached
 
-        # Build lookup from live contacts + historical NODEINFO packets.
-        # Live contacts take priority; DB fills gaps for nodes not currently
-        # in the contacts cache.  For hash_size >= 2, collisions are rare
-        # so most hops resolve uniquely.
-        lookup: dict[str, list[str]] = {}
-        seen_keys: set[str] = set()  # track full keys to avoid duplicates
-
-        # Source 1: live MeshCore contacts
-        for backend in self.backends:
-            if backend.backend_type == BackendType.MESHCORE:
-                for prefix, contact in backend._contacts.items():
-                    full_key = contact.get('_full_pub_key', '') or contact.get('public_key', '')
-                    if full_key and len(full_key) >= hash_size * 2:
-                        h = full_key[:hash_size * 2].lower()
-                        name = contact.get('adv_name', '') or prefix
-                        lookup.setdefault(h, []).append(name)
-                        seen_keys.add(full_key.lower())
-
-        # Source 2: historical NODEINFO packets (fills gaps) — pre-parsed cache
-        for entry in self._get_nodeinfo_entries():
-            full_key = entry['full_key']
-            if full_key.lower() in seen_keys:
-                continue
-            if len(full_key) >= hash_size * 2:
-                h = full_key[:hash_size * 2].lower()
-                lookup.setdefault(h, []).append(entry['name'])
-                seen_keys.add(full_key.lower())
+        # Build the hash → candidate-names lookup once per generation per
+        # hash_size, gated on per-node evidence so flood-only strangers
+        # don't poison the buckets.
+        if self._decode_route_lookup is None or self._decode_route_lookup[0] != hash_size:
+            self._decode_route_lookup = (hash_size, *self._build_route_lookup(hash_size))
+        lookup: dict[str, list[str]] = self._decode_route_lookup[1]
 
         # Phase 1: basic hash lookup
         step = hash_size * 2
