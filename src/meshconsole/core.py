@@ -43,7 +43,7 @@ from meshconsole.models import (
     UnifiedNode,
     PacketSummary,
 )
-from meshconsole.database import DatabaseHandler
+from meshconsole.database import DatabaseHandler, decode_raw_packet
 from meshconsole.config import MeshConsoleConfig
 from meshconsole.backend.base import MeshBackend
 
@@ -172,7 +172,7 @@ class GeoResolver:
                 continue
             seen.add(from_id)
             try:
-                raw = json.loads(raw_json) if isinstance(raw_json, str) else raw_json
+                raw = decode_raw_packet(raw_json)
                 name = raw.get('adv_name', '')
                 if not name or name in new_coords:
                     continue
@@ -723,6 +723,11 @@ class MeshtasticTool:
         # Load database config
         self.max_packets_memory = self.config.getint('Database', 'max_packets_memory', fallback=1000)
 
+        # Auto-prune (v3.15.0). Default off so existing deployments don't lose
+        # history without consent. Set [Database] max_age_days=N to enable.
+        self.db_max_age_days = self.config.getint('Database', 'max_age_days', fallback=0)
+        self.db_prune_interval = self.config.getint('Database', 'prune_interval_seconds', fallback=3600)
+
         # Privacy config
         self.hide_dm_from_feed = self.config.getboolean('Privacy', 'hide_dm_from_feed', fallback=False)
 
@@ -730,6 +735,14 @@ class MeshtasticTool:
         self.latest_packets = []
         self.latest_packets_lock = threading.Lock()
         self.db_handler = DatabaseHandler()
+        # One-shot backfill of nodes_live from existing packet history so
+        # eligibility/Cinema work straight away on legacy DBs.
+        try:
+            self.db_handler.backfill_nodes_live()
+        except Exception as e:
+            logger.warning(f"nodes_live backfill skipped: {e}")
+        if self.db_max_age_days > 0:
+            self.db_handler.start_prune_thread(self.db_max_age_days, self.db_prune_interval)
         self.route_analyzer = RouteAnalyzer(self.db_handler)
         self._nodeinfo_cache = None   # (timestamp, rows) tuple for decode_route
         self._nodeinfo_cache_ttl = 10  # seconds
@@ -998,6 +1011,28 @@ class MeshtasticTool:
                 decoded_hops = self.decode_route(path_hex, hash_size)
                 self.route_analyzer.learn_route(decoded_hops)
 
+        # Materialise NODEINFO observations into nodes_live for the
+        # eligibility filter and Cinema's geo lookups (v3.15.0).
+        if packet.port_name in ('NODEINFO', 'NODEINFO_APP'):
+            raw = packet.raw_packet if isinstance(packet.raw_packet, dict) else {}
+            full_key = (raw.get('public_key') or raw.get('adv_key') or '').lower()
+            if not full_key and packet.backend == BackendType.MESHTASTIC:
+                # Meshtastic NODEINFO uses node user.id like "!da65acdc"
+                user = (raw.get('decoded') or {}).get('user') or {}
+                if user.get('id'):
+                    full_key = user['id'].lstrip('!').lower()
+            if full_key:
+                backend_str = packet.backend.value if isinstance(packet.backend, BackendType) else str(packet.backend)
+                self.db_handler.upsert_node(
+                    full_key=full_key,
+                    backend=backend_str,
+                    name=raw.get('adv_name') or raw.get('name') or packet.from_name or '',
+                    lat=raw.get('adv_lat') or raw.get('latitude'),
+                    lon=raw.get('adv_lon') or raw.get('longitude'),
+                    timestamp=packet.timestamp,
+                    path_len=raw.get('path_len'),
+                )
+
         # Handle MeshCore traceroute responses
         if packet.port_name == 'TRACEROUTE' and packet.backend == BackendType.MESHCORE:
             with self.traceroute_results_lock:
@@ -1023,8 +1058,17 @@ class MeshtasticTool:
                 self.latest_packets.append(packet_dict)
                 effective_limit = self.max_packets_memory * max(1, len(self.backends))
                 self.latest_packets = self.latest_packets[-effective_limit:]
-            # Push to SSE subscribers for real-time updates
-            self._publish_sse({'event': 'packet', 'port_name': packet_dict.get('port_name', '')})
+            # Push to SSE subscribers for real-time updates. v3.15.0 also
+            # surfaces a compact trail descriptor so the live map can animate
+            # the packet along its actual hops as soon as it arrives.
+            trail = self._build_trail_for_sse(packet_dict)
+            self._publish_sse({
+                'event': 'packet',
+                'port_name': packet_dict.get('port_name', ''),
+                'backend': packet_dict.get('backend', ''),
+                'from_id': packet_dict.get('from_id', ''),
+                'trail': trail,
+            })
 
     def get_local_node_ids(self) -> list[str]:
         """Return all local node IDs across all backends."""
@@ -1617,7 +1661,7 @@ class MeshtasticTool:
                             'air_util_tx': None,
                             'uptime_hours': None,
                             'uptime_minutes': None,
-                            'raw_packet': json.loads(packet_row[5]),
+                            'raw_packet': decode_raw_packet(packet_row[5]),
                             'backend': packet_row[6] if len(packet_row) > 6 else 'meshtastic',
                             'device_id': packet_row[7] if len(packet_row) > 7 else '',
                         }
@@ -1724,6 +1768,65 @@ class MeshtasticTool:
                     dead.append(q)
             for q in dead:
                 self._sse_subscribers.remove(q)
+
+    def _build_trail_for_sse(self, packet_dict: dict) -> list[dict]:
+        """Compact trail descriptor for the live map's trail-on-arrival
+        animation: a list of [{name, lat, lon}] from sender to last hop, with
+        coords filled when known. Empty list if we have no spatial info — the
+        client just won't draw anything in that case.
+        """
+        backend = packet_dict.get('backend')
+        if hasattr(backend, 'value'):
+            backend = backend.value
+        if backend != 'meshcore':
+            return []
+        raw = packet_dict.get('raw_packet') or {}
+        if not isinstance(raw, dict):
+            return []
+        trail: list[dict] = []
+
+        # Sender first — try to find its coords via nodes_live
+        from_id = (packet_dict.get('from_id') or '').replace('mc:', '').lower()
+        if from_id:
+            try:
+                with self.db_handler.lock:
+                    self.db_handler.cursor.execute(
+                        "SELECT name, lat, lon FROM nodes_live "
+                        "WHERE backend='meshcore' AND full_key LIKE ? "
+                        "AND has_gps=1 LIMIT 1",
+                        (from_id + '%',),
+                    )
+                    row = self.db_handler.cursor.fetchone()
+                if row:
+                    trail.append({'name': row[0] or from_id[:12], 'lat': row[1], 'lon': row[2]})
+            except sqlite3.Error:
+                pass
+
+        # Then each resolved hop
+        path_hex = raw.get('path', '')
+        hash_size = raw.get('path_hash_size', 1) or 1
+        if path_hex and len(path_hex) >= 2 * hash_size:
+            try:
+                hops = self.decode_route(path_hex, hash_size)
+            except Exception:
+                hops = []
+            for hop in hops:
+                name = hop.get('name')
+                lat = lon = None
+                if name:
+                    try:
+                        with self.db_handler.lock:
+                            self.db_handler.cursor.execute(
+                                "SELECT lat, lon FROM nodes_live WHERE name=? AND has_gps=1 LIMIT 1",
+                                (name,),
+                            )
+                            row = self.db_handler.cursor.fetchone()
+                        if row:
+                            lat, lon = row[0], row[1]
+                    except sqlite3.Error:
+                        pass
+                trail.append({'name': name or hop.get('hash'), 'lat': lat, 'lon': lon})
+        return trail
 
     # ── Device telemetry ─────────────────────────────────────
 
@@ -1875,61 +1978,27 @@ class MeshtasticTool:
     def _get_nodeinfo_entries(self):
         """Return cached, pre-parsed NODEINFO entries.
 
-        Each entry is ``{full_key, name, path_len, has_gps}``. ``path_len`` is
-        from the latest received NODEINFO (None if not present); ``has_gps``
-        flags whether the latest advert carried valid (non-0,0) coords.
-
-        Caches both the raw DB query (avoiding repeated SELECTs) and the
-        parsed JSON (avoiding repeated json.loads on every call).
+        Each entry is ``{full_key, name, path_len, has_gps}``. Reads from the
+        ``nodes_live`` materialised table (v3.15.0) — populated incrementally
+        on every NODEINFO arrival, so this is now O(nodes) instead of
+        O(packets). Cached for ``_nodeinfo_cache_ttl`` seconds to absorb the
+        occasional flurry of decode_route calls.
         """
         now = time.time()
         if self._nodeinfo_parsed_cache and (now - self._nodeinfo_parsed_cache[0]) < self._nodeinfo_cache_ttl:
             return self._nodeinfo_parsed_cache[1]
 
-        # Get raw rows (may also refresh _nodeinfo_cache).
-        # Per from_id, only the latest NODEINFO is meaningful — older receptions
-        # contain stale name/key data and their raw_packet bytes vary per
-        # reception (rxRssi/rxSnr/etc), so SELECT DISTINCT on raw_packet was a
-        # full scan that deduped nothing. GROUP BY from_id with MAX(timestamp)
-        # uses the (port_name, from_id, timestamp) index and SQLite's
-        # documented bare-column-with-MAX rule to pick the newest row per node.
-        if self._nodeinfo_cache and (now - self._nodeinfo_cache[0]) < self._nodeinfo_cache_ttl:
-            db_rows = self._nodeinfo_cache[1]
-        else:
-            try:
-                with self.db_handler.lock:
-                    self.db_handler.cursor.execute(
-                        "SELECT raw_packet, MAX(timestamp) FROM packets "
-                        "WHERE port_name IN ('NODEINFO','NODEINFO_APP') "
-                        "AND backend='meshcore' GROUP BY from_id"
-                    )
-                    db_rows = [(row[0],) for row in self.db_handler.cursor.fetchall()]
-                self._nodeinfo_cache = (now, db_rows)
-            except Exception:
-                db_rows = []
-
-        entries = []
-        for (raw_json,) in db_rows:
-            try:
-                raw = json.loads(raw_json) if isinstance(raw_json, str) else raw_json
-                full_key = raw.get('public_key', '') or raw.get('adv_key', '')
-                name = raw.get('adv_name', '')
-                if full_key and name:
-                    lat = raw.get('adv_lat')
-                    lon = raw.get('adv_lon')
-                    has_gps = (
-                        lat is not None and lon is not None
-                        and abs(float(lat)) > 0.01 and abs(float(lon)) > 0.01
-                    )
-                    entries.append({
-                        'full_key': full_key,
-                        'name': name,
-                        'path_len': raw.get('path_len'),
-                        'has_gps': has_gps,
-                    })
-            except (json.JSONDecodeError, TypeError, ValueError):
-                pass
-
+        rows = self.db_handler.fetch_nodes_live(backend='meshcore')
+        entries = [
+            {
+                'full_key': r['full_key'],
+                'name': r['name'] or r['full_key'][:12],
+                'path_len': r['min_path_len'],
+                'has_gps': r['has_gps'],
+            }
+            for r in rows
+            if r['full_key'] and (r['name'] or r['full_key'])
+        ]
         self._nodeinfo_parsed_cache = (now, entries)
         return entries
 
@@ -2043,44 +2112,23 @@ class MeshtasticTool:
     def _get_nodeinfo_evidence(self) -> dict[str, dict]:
         """Per-node evidence used to gate route-hop candidate eligibility.
 
-        Returns ``{full_key_lower: {'count': int, 'min_path_len': int|None}}``.
-
-        ``count`` is the number of NODEINFO packets we've received from that
-        node. ``min_path_len`` is the shortest path the advert traversed to
-        reach us — large path_len means the sender is many hops away.
-
-        Used by ``decode_route`` to suppress flood-only strangers (single
-        advert, long path) from poisoning the hash-byte → node mapping.
-        Cached for ``_nodeinfo_cache_ttl`` seconds.
+        Returns ``{full_key_lower: {'count': int, 'path_len': int|None,
+        'has_gps': bool, 'name': str}}``. Reads from ``nodes_live`` (v3.15.0).
         """
         now = time.time()
         if self._nodeinfo_evidence_cache and (now - self._nodeinfo_evidence_cache[0]) < self._nodeinfo_cache_ttl:
             return self._nodeinfo_evidence_cache[1]
 
-        evidence: dict[str, dict] = {}
-        try:
-            with self.db_handler.lock:
-                self.db_handler.cursor.execute(
-                    "SELECT from_id, COUNT(*) FROM packets "
-                    "WHERE port_name IN ('NODEINFO','NODEINFO_APP') "
-                    "AND backend='meshcore' GROUP BY from_id"
-                )
-                count_by_from = dict(self.db_handler.cursor.fetchall())
-        except Exception:
-            count_by_from = {}
-
-        for entry in self._get_nodeinfo_entries():
-            full_key = (entry.get('full_key') or '').lower()
-            if not full_key:
-                continue
-            from_id = f"mc:{full_key[:12]}"
-            evidence[full_key] = {
-                'count': count_by_from.get(from_id, 0),
-                'path_len': entry.get('path_len'),
-                'has_gps': entry.get('has_gps', False),
-                'name': entry.get('name', ''),
+        evidence = {
+            r['full_key']: {
+                'count': r['nodeinfo_count'],
+                'path_len': r['min_path_len'],
+                'has_gps': r['has_gps'],
+                'name': r['name'],
             }
-
+            for r in self.db_handler.fetch_nodes_live(backend='meshcore')
+            if r['full_key']
+        }
         self._nodeinfo_evidence_cache = (now, evidence)
         return evidence
 
@@ -2107,7 +2155,7 @@ class MeshtasticTool:
         node_hashes: set[str] = set()
         for (raw_json,) in rows:
             try:
-                raw = json.loads(raw_json) if isinstance(raw_json, str) else raw_json
+                raw = decode_raw_packet(raw_json)
                 path = raw.get('path', '')
                 if not path or len(path) < 4:
                     continue
@@ -2959,7 +3007,7 @@ class MeshtasticTool:
                     'to_id': packet[2],
                     'port_name': packet[3],
                     'payload': packet[4],
-                    'raw_packet': json.loads(packet[5])
+                    'raw_packet': decode_raw_packet(packet[5])
                 })
             with open(filename, 'w') as f:
                 json.dump(data, f, default=self._json_serializer, indent=2)

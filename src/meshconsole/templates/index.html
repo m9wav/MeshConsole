@@ -3,7 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#0a1628">
     <title>MeshConsole by M9WAV</title>
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="apple-touch-icon" href="/static/icon-192.png">
     
     <!-- Bootstrap CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -891,6 +894,11 @@
                     </button>
                 </li>
                 <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="cinema-tab" data-bs-toggle="tab" data-bs-target="#cinema" type="button" role="tab">
+                        <i class="bi bi-film"></i> Cinema
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
                     <button class="nav-link" id="stats-tab" data-bs-toggle="tab" data-bs-target="#stats" type="button" role="tab">
                         <i class="bi bi-graph-up"></i> Statistics
                     </button>
@@ -1247,6 +1255,87 @@
                             <div><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#94a3b8;margin-right:4px;"></span> Meshtastic</div>
                             <div><span style="display:inline-block;width:10px;height:3px;background:#6366f1;margin-right:4px;vertical-align:middle;"></span> Trunk link</div>
                             <div><span style="display:inline-block;width:10px;height:3px;background:#f59e0b;margin-right:4px;vertical-align:middle;"></span> High-volume trunk</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Mesh Cinema Tab (v3.15.0) -->
+                <div class="tab-pane fade" id="cinema" role="tabpanel">
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <h4><i class="bi bi-film text-primary"></i> Mesh Cinema</h4>
+                            <p class="text-muted mb-0">Time-scrubbed geographic replay of mesh activity. Pick a window, hit play, watch packets travel along their actual paths.</p>
+                        </div>
+                        <div class="col-md-6 text-md-end">
+                            <span id="cinema-stats-pill" class="badge bg-secondary" style="font-size:0.85rem">idle</span>
+                        </div>
+                    </div>
+
+                    <div class="card card-modern mb-3">
+                        <div class="card-body py-3">
+                            <div class="row g-2 align-items-end">
+                                <div class="col-md-3">
+                                    <label class="form-label small mb-1">From</label>
+                                    <input type="datetime-local" id="cinema-start" class="form-control form-control-sm">
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label small mb-1">To</label>
+                                    <input type="datetime-local" id="cinema-end" class="form-control form-control-sm">
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label small mb-1">Quick range</label>
+                                    <select id="cinema-range" class="form-select form-select-sm">
+                                        <option value="900">Last 15 min</option>
+                                        <option value="3600">Last 1 hour</option>
+                                        <option value="21600" selected>Last 6 hours</option>
+                                        <option value="86400">Last 24 hours</option>
+                                        <option value="604800">Last 7 days</option>
+                                        <option value="custom">Custom (use From/To)</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-3 d-flex gap-1">
+                                    <button id="cinema-load" class="btn btn-primary-modern btn-sm flex-grow-1">
+                                        <i class="bi bi-cloud-arrow-down"></i> Load
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="cinema-map" style="width:100%; height:560px; border-radius:0.5rem; overflow:hidden; background:#0a1628; position:relative;">
+                        <div id="cinema-overlay" style="position:absolute; left:0; right:0; top:0; bottom:0; display:flex; align-items:center; justify-content:center; background:rgba(10,22,40,0.85); color:#cbd5e1; z-index:500; font-size:1rem;">
+                            <div class="text-center">
+                                <i class="bi bi-film" style="font-size:2.5rem; opacity:0.6"></i>
+                                <div class="mt-2">Pick a window and press <strong>Load</strong></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card card-modern mt-3">
+                        <div class="card-body py-3">
+                            <div class="d-flex align-items-center gap-2 flex-wrap">
+                                <button id="cinema-play" class="btn btn-success btn-sm" disabled>
+                                    <i class="bi bi-play-fill"></i> Play
+                                </button>
+                                <button id="cinema-pause" class="btn btn-secondary btn-sm" disabled style="display:none">
+                                    <i class="bi bi-pause-fill"></i> Pause
+                                </button>
+                                <button id="cinema-stop" class="btn btn-outline-secondary btn-sm" disabled>
+                                    <i class="bi bi-stop-fill"></i> Reset
+                                </button>
+                                <select id="cinema-speed" class="form-select form-select-sm" style="width:auto" disabled>
+                                    <option value="1">1×</option>
+                                    <option value="4">4×</option>
+                                    <option value="30">30×</option>
+                                    <option value="120" selected>120×</option>
+                                    <option value="600">600×</option>
+                                    <option value="1800">1800×</option>
+                                </select>
+                                <span id="cinema-fired" class="badge bg-dark" title="Packets animated so far">0</span>
+                                <span id="cinema-cursor" class="text-muted small ms-2" style="min-width:14ch">—</span>
+                                <input type="range" id="cinema-scrub" class="form-range flex-grow-1 mx-2" min="0" max="1000" value="0" step="1" disabled>
+                                <span id="cinema-progress" class="text-muted small" style="min-width:6ch; text-align:right">0%</span>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -1832,6 +1921,14 @@
                 };
                 let _sseDebounce = null;
                 es.onmessage = function(e) {
+                    // Parse the event payload — v3.15.0 SSE messages now carry
+                    // a compact trail descriptor we can animate on arrival.
+                    let payload = null;
+                    try { payload = JSON.parse(e.data); } catch(err) {}
+                    if (payload && payload.trail && payload.trail.length >= 2) {
+                        try { trailOnArrival(payload); } catch(err) { console.warn('trail render failed', err); }
+                    }
+
                     if (!appState.autoRefresh) return;
                     const activeTab = document.querySelector('.tab-pane.active');
                     if (!activeTab) return;
@@ -4578,6 +4675,78 @@
 
         // ── Mesh Map ──────────────────────────────────────────
 
+        // Trail-on-arrival animation (v3.15.0): when a packet lands, draw its
+        // resolved hop path on the live Mesh Map for ~2.4s. Uses the same
+        // Leaflet-polyline approach as Cinema so it can't fall foul of canvas
+        // z-index or sizing quirks. Only fires while the Mesh Map tab is
+        // visible AND the trail has at least two geo-positioned points.
+        const liveTrail = {
+            fxLayer: null,
+            active: [],   // {halo, line, head, startedAt, expiresAt}
+            rafId: null,
+        };
+
+        function _ensureLiveTrailLayer() {
+            if (liveTrail.fxLayer) return liveTrail.fxLayer;
+            const map = networkMapState.map;
+            if (!map) return null;
+            liveTrail.fxLayer = L.layerGroup().addTo(map);
+            return liveTrail.fxLayer;
+        }
+
+        function trailOnArrival(payload) {
+            const activeTab = document.querySelector('.tab-pane.active');
+            if (!activeTab || activeTab.id !== 'network-map') return;
+            if (!networkMapState.map) return;
+            const pts = (payload.trail || [])
+                .filter(h => h.lat != null && h.lon != null)
+                .map(h => [h.lat, h.lon]);
+            if (pts.length < 2) return;
+            if (!_ensureLiveTrailLayer()) return;
+
+            const colour = '#22c55e';
+            const halo = L.polyline(pts, {
+                color: colour, weight: 12, opacity: 0.18, lineCap: 'round', lineJoin: 'round',
+            }).addTo(liveTrail.fxLayer);
+            const line = L.polyline(pts, {
+                color: colour, weight: 3.5, opacity: 0.95, lineCap: 'round', lineJoin: 'round',
+            }).addTo(liveTrail.fxLayer);
+            const head = L.circleMarker(pts[pts.length - 1], {
+                radius: 6, color: '#ffffff', weight: 2, fillColor: colour, fillOpacity: 1,
+            }).addTo(liveTrail.fxLayer);
+            const now = performance.now();
+            liveTrail.active.push({ halo, line, head, startedAt: now, expiresAt: now + 2400 });
+
+            if (!liveTrail.rafId) {
+                const tick = () => {
+                    const t = performance.now();
+                    const remaining = [];
+                    for (const fx of liveTrail.active) {
+                        const elapsed = t - fx.startedAt;
+                        const total = fx.expiresAt - fx.startedAt;
+                        if (elapsed >= total) {
+                            liveTrail.fxLayer.removeLayer(fx.halo);
+                            liveTrail.fxLayer.removeLayer(fx.line);
+                            liveTrail.fxLayer.removeLayer(fx.head);
+                            continue;
+                        }
+                        const frac = elapsed / total;
+                        const haloOp = Math.max(0, 0.18 * (1 - frac));
+                        const lineOp = Math.max(0, 0.95 * (1 - frac));
+                        fx.halo.setStyle({ opacity: haloOp });
+                        fx.line.setStyle({ opacity: lineOp });
+                        fx.head.setStyle({ opacity: lineOp, fillOpacity: lineOp });
+                        remaining.push(fx);
+                    }
+                    liveTrail.active = remaining;
+                    liveTrail.rafId = liveTrail.active.length
+                        ? requestAnimationFrame(tick)
+                        : null;
+                };
+                liveTrail.rafId = requestAnimationFrame(tick);
+            }
+        }
+
         let networkMapState = {
             map: null,
             markers: {},        // id -> marker
@@ -5965,6 +6134,361 @@
                     setTimeout(doHighlight, 1500);
                 });
         }
+
+        // ════════════════════════════════════════════════════
+        // Mesh Cinema (v3.15.0) — time-scrubbed geographic replay
+        // ════════════════════════════════════════════════════
+        const cinema = {
+            map: null,
+            data: null,            // {start, end, nodes, packets, truncated}
+            startMs: 0,
+            endMs: 0,
+            cursorMs: 0,           // current playhead in ms
+            playing: false,
+            speed: 120,
+            lastFrameAt: 0,        // wall-clock ms of last animation frame
+            activeFx: [],          // {pts, polyline, head, startedAt, expiresAt, backend}
+            fxLayer: null,         // Leaflet layer for trail polylines
+            firedCount: 0,
+            nodeLayer: null,
+            initialized: false,
+        };
+
+        function cinemaInitMap() {
+            if (cinema.initialized) {
+                // Tiles only request when the container has non-zero size, so
+                // an early init (tab fade in still running) silently produces
+                // an empty map. invalidateSize() forces Leaflet to re-measure.
+                setTimeout(() => cinema.map.invalidateSize(), 0);
+                return;
+            }
+            const container = document.getElementById('cinema-map');
+            cinema.map = L.map(container, {
+                zoomControl: true,
+                attributionControl: true,
+                preferCanvas: true,
+            }).setView([52.0, -2.0], 6);
+            const isDark = document.body.classList.contains('theme-dark');
+            const tileUrl = isDark
+                ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
+                : 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
+            L.tileLayer(tileUrl, {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
+                maxZoom: 19,
+                subdomains: 'abcd',
+            }).addTo(cinema.map);
+            cinema.nodeLayer = L.layerGroup().addTo(cinema.map);
+            cinema.fxLayer = L.layerGroup().addTo(cinema.map);
+            cinema.initialized = true;
+            // Bootstrap finishes the tab transition asynchronously; force a
+            // size recompute on the next animation frame so tiles populate.
+            requestAnimationFrame(() => cinema.map.invalidateSize());
+            setTimeout(() => cinema.map.invalidateSize(), 250);
+        }
+
+        function cinemaSetISOInputs() {
+            const sel = document.getElementById('cinema-range').value;
+            if (sel === 'custom') return;
+            const secs = parseInt(sel, 10);
+            const end = new Date();
+            const start = new Date(Date.now() - secs * 1000);
+            const fmt = d => d.toISOString().slice(0, 16);
+            document.getElementById('cinema-start').value = fmt(start);
+            document.getElementById('cinema-end').value = fmt(end);
+        }
+
+        function cinemaLoadWindow() {
+            const startISO = document.getElementById('cinema-start').value;
+            const endISO = document.getElementById('cinema-end').value;
+            if (!startISO || !endISO) {
+                alert('Pick start and end times first');
+                return;
+            }
+            const overlay = document.getElementById('cinema-overlay');
+            overlay.innerHTML = '<div class="text-center"><div class="spinner-border text-info" role="status"></div><div class="mt-2">Loading window…</div></div>';
+            overlay.style.display = 'flex';
+
+            const start = new Date(startISO).toISOString();
+            const end = new Date(endISO).toISOString();
+            fetch(`/cinema/window?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&max_packets=10000`)
+                .then(r => r.json())
+                .then(data => {
+                    if (data.error) throw new Error(data.error);
+                    cinema.data = data;
+                    cinema.startMs = new Date(data.start).getTime();
+                    cinema.endMs = new Date(data.end).getTime();
+                    cinema.cursorMs = cinema.startMs;
+                    cinemaClearAllFx();
+                    cinema.firedCount = 0;
+                    document.getElementById('cinema-fired').textContent = '0';
+                    cinemaRenderNodes();
+                    cinemaUpdateCursor();
+                    document.getElementById('cinema-play').disabled = false;
+                    document.getElementById('cinema-stop').disabled = false;
+                    document.getElementById('cinema-scrub').disabled = false;
+                    document.getElementById('cinema-speed').disabled = false;
+                    overlay.style.display = 'none';
+                    const animatable = data.packets.filter(p =>
+                        (p.from_lat != null && p.from_lon != null)
+                        || (p.hops || []).some(h => h.lat != null && h.lon != null)).length;
+                    document.getElementById('cinema-stats-pill').textContent =
+                        `${data.packets.length} packets · ${animatable} animatable · ${data.nodes.length} nodes${data.truncated ? ' · truncated' : ''}`;
+                    document.getElementById('cinema-stats-pill').className = 'badge bg-info';
+                    // Centre on the local node (when one's known) and zoom to a
+                    // useful local radius — much better than fitting all 2.8k
+                    // UK-wide nodes which always zooms out too far.
+                    cinemaFocusOnLocal(data);
+                })
+                .catch(err => {
+                    overlay.innerHTML = `<div class="text-center text-danger"><i class="bi bi-exclamation-triangle"></i><div class="mt-2">Load failed: ${err.message || err}</div></div>`;
+                });
+        }
+
+        function cinemaFocusOnLocal(data) {
+            // Score every geo-positioned node by how often it actually shows
+            // up in this window's packets — sender, hop, anywhere. Then take
+            // the bounding box of the top ~70% of activity (by packet count)
+            // and fit to that. This focuses on where things ARE happening,
+            // not on outliers like a single distant node that broadcast once.
+            const withGps = (data.nodes || []).filter(n => n.lat != null && n.lon != null);
+            if (!withGps.length) return;
+
+            const activityByName = new Map();
+            const activityByFull = new Map();
+            for (const p of data.packets || []) {
+                if (p.from_lat != null && p.from_lon != null) {
+                    const key = (p.from_id || '').replace('mc:', '').toLowerCase();
+                    activityByFull.set(key, (activityByFull.get(key) || 0) + 1);
+                }
+                for (const h of (p.hops || [])) {
+                    if (h.lat == null || h.lon == null) continue;
+                    if (h.name) activityByName.set(h.name, (activityByName.get(h.name) || 0) + 1);
+                }
+            }
+
+            const ranked = withGps.map(n => {
+                let count = activityByName.get(n.name) || 0;
+                if (!count) {
+                    for (const [fk, c] of activityByFull) {
+                        if (n.full_key && n.full_key.startsWith(fk)) { count += c; break; }
+                    }
+                }
+                return { n, count };
+            }).sort((a, b) => b.count - a.count);
+
+            const totalActive = ranked.reduce((s, r) => s + r.count, 0);
+            if (totalActive === 0) {
+                // No animatable activity at all — just fit to all known nodes
+                const bounds = L.latLngBounds(withGps.map(n => [n.lat, n.lon]));
+                cinema.map.fitBounds(bounds, { padding: [40, 40], maxZoom: 10 });
+                return;
+            }
+
+            // Take the smallest set of top nodes that covers ~70% of activity.
+            const target = totalActive * 0.7;
+            const focus = [];
+            let acc = 0;
+            for (const r of ranked) {
+                if (r.count === 0) break;
+                focus.push(r.n);
+                acc += r.count;
+                if (acc >= target) break;
+            }
+            if (focus.length < 2) {
+                // Single hot node — pad with the next handful of geo nodes so
+                // we get a reasonable city-radius view rather than max zoom.
+                for (const r of ranked) {
+                    if (focus.includes(r.n)) continue;
+                    focus.push(r.n);
+                    if (focus.length >= 5) break;
+                }
+            }
+            const bounds = L.latLngBounds(focus.map(n => [n.lat, n.lon]));
+            cinema.map.fitBounds(bounds, { padding: [60, 60], maxZoom: 11 });
+        }
+
+        function cinemaRenderNodes() {
+            cinema.nodeLayer.clearLayers();
+            cinema.nodeMarkers = {};
+            const isDark = document.body.classList.contains('theme-dark');
+            // Subtle slate dots — they're scenery, the trails are the show.
+            const dotColour = isDark ? '#94a3b8' : '#64748b';
+            (cinema.data?.nodes || []).forEach(n => {
+                if (!n.lat || !n.lon) return;
+                const m = L.circleMarker([n.lat, n.lon], {
+                    radius: 2.5,
+                    color: dotColour,
+                    weight: 0,
+                    fillColor: dotColour,
+                    fillOpacity: 0.45,
+                });
+                m.bindTooltip(n.name || n.full_key.slice(0, 12),
+                              { direction: 'top', offset: [0, -2], opacity: 0.85 });
+                cinema.nodeLayer.addLayer(m);
+                if (n.name) cinema.nodeMarkers[n.name] = m;
+            });
+        }
+
+        function cinemaUpdateCursor() {
+            const total = Math.max(1, cinema.endMs - cinema.startMs);
+            const frac = (cinema.cursorMs - cinema.startMs) / total;
+            document.getElementById('cinema-scrub').value = Math.round(frac * 1000);
+            document.getElementById('cinema-progress').textContent = `${Math.round(frac * 100)}%`;
+            const d = new Date(cinema.cursorMs);
+            document.getElementById('cinema-cursor').textContent =
+                d.toLocaleString(undefined, { hour12: false });
+        }
+
+        function cinemaTick() {
+            if (!cinema.playing) return;
+            const now = performance.now();
+            const dtWall = now - cinema.lastFrameAt;
+            cinema.lastFrameAt = now;
+            cinema.cursorMs += dtWall * cinema.speed;
+            if (cinema.cursorMs >= cinema.endMs) {
+                cinema.cursorMs = cinema.endMs;
+                cinemaPause();
+            }
+            const win = cinema.cursorMs - dtWall * cinema.speed;
+            for (const p of cinema.data.packets) {
+                const t = new Date(p.ts).getTime();
+                if (t > win && t <= cinema.cursorMs) {
+                    cinemaSpawnTrail(p);
+                }
+            }
+            cinemaUpdateActiveFx(now);
+            cinemaUpdateCursor();
+            requestAnimationFrame(cinemaTick);
+        }
+
+        function cinemaHopsToPoints(packet) {
+            const pts = [];
+            if (packet.from_lat != null && packet.from_lon != null) {
+                pts.push([packet.from_lat, packet.from_lon]);
+            }
+            (packet.hops || []).forEach(h => {
+                if (h.lat != null && h.lon != null) pts.push([h.lat, h.lon]);
+            });
+            return pts;
+        }
+
+        function cinemaSpawnTrail(packet) {
+            const pts = cinemaHopsToPoints(packet);
+            if (pts.length < 2) return;
+            // All activity in green — distinct from the subtle slate node dots.
+            const colour = '#22c55e';
+            const halo = L.polyline(pts, {
+                color: colour, weight: 12, opacity: 0.18, lineCap: 'round', lineJoin: 'round',
+            }).addTo(cinema.fxLayer);
+            const line = L.polyline(pts, {
+                color: colour, weight: 3.5, opacity: 0.95, lineCap: 'round', lineJoin: 'round',
+            }).addTo(cinema.fxLayer);
+            const head = L.circleMarker(pts[pts.length - 1], {
+                radius: 6, color: '#ffffff', weight: 2, fillColor: colour, fillOpacity: 1,
+            }).addTo(cinema.fxLayer);
+            const now = performance.now();
+            cinema.activeFx.push({
+                halo, line, head,
+                startedAt: now,
+                expiresAt: now + 2400,
+            });
+            cinema.firedCount += 1;
+            const pill = document.getElementById('cinema-fired');
+            if (pill) {
+                pill.textContent = cinema.firedCount;
+                pill.classList.add('bg-success'); pill.classList.remove('bg-dark');
+                setTimeout(() => { pill.classList.remove('bg-success'); pill.classList.add('bg-dark'); }, 180);
+            }
+        }
+
+        function cinemaUpdateActiveFx(now) {
+            const remaining = [];
+            for (const fx of cinema.activeFx) {
+                const elapsed = now - fx.startedAt;
+                const total = fx.expiresAt - fx.startedAt;
+                if (elapsed >= total) {
+                    cinema.fxLayer.removeLayer(fx.halo);
+                    cinema.fxLayer.removeLayer(fx.line);
+                    cinema.fxLayer.removeLayer(fx.head);
+                    continue;
+                }
+                const frac = elapsed / total;
+                const haloOp = Math.max(0, 0.18 * (1 - frac));
+                const lineOp = Math.max(0, 0.95 * (1 - frac));
+                fx.halo.setStyle({ opacity: haloOp });
+                fx.line.setStyle({ opacity: lineOp });
+                fx.head.setStyle({ opacity: lineOp, fillOpacity: lineOp });
+                remaining.push(fx);
+            }
+            cinema.activeFx = remaining;
+        }
+
+        function cinemaClearAllFx() {
+            cinema.activeFx.forEach(fx => {
+                cinema.fxLayer.removeLayer(fx.halo);
+                cinema.fxLayer.removeLayer(fx.line);
+                cinema.fxLayer.removeLayer(fx.head);
+            });
+            cinema.activeFx = [];
+        }
+
+        function cinemaPlay() {
+            if (!cinema.data) return;
+            if (cinema.cursorMs >= cinema.endMs) {
+                cinema.cursorMs = cinema.startMs;
+                cinema.firedCount = 0;
+                const pill = document.getElementById('cinema-fired');
+                if (pill) pill.textContent = '0';
+            }
+            cinema.playing = true;
+            cinema.lastFrameAt = performance.now();
+            document.getElementById('cinema-play').style.display = 'none';
+            document.getElementById('cinema-pause').style.display = '';
+            document.getElementById('cinema-pause').disabled = false;
+            requestAnimationFrame(cinemaTick);
+        }
+
+        function cinemaPause() {
+            cinema.playing = false;
+            document.getElementById('cinema-play').style.display = '';
+            document.getElementById('cinema-pause').style.display = 'none';
+        }
+
+        function cinemaReset() {
+            cinemaPause();
+            cinema.cursorMs = cinema.startMs;
+            cinemaClearAllFx();
+            cinema.firedCount = 0;
+            document.getElementById('cinema-fired').textContent = '0';
+            cinemaUpdateCursor();
+        }
+
+        // Wire up controls
+        (function wireCinema() {
+            const onTabShow = () => {
+                cinemaInitMap();
+                if (!document.getElementById('cinema-start').value) cinemaSetISOInputs();
+            };
+            document.getElementById('cinema-tab').addEventListener('shown.bs.tab', onTabShow);
+
+            document.getElementById('cinema-range').addEventListener('change', () => {
+                if (document.getElementById('cinema-range').value !== 'custom') cinemaSetISOInputs();
+            });
+            document.getElementById('cinema-load').addEventListener('click', cinemaLoadWindow);
+            document.getElementById('cinema-play').addEventListener('click', cinemaPlay);
+            document.getElementById('cinema-pause').addEventListener('click', cinemaPause);
+            document.getElementById('cinema-stop').addEventListener('click', cinemaReset);
+            document.getElementById('cinema-speed').addEventListener('change', e => {
+                cinema.speed = parseFloat(e.target.value);
+            });
+            document.getElementById('cinema-scrub').addEventListener('input', e => {
+                if (!cinema.data) return;
+                const frac = parseInt(e.target.value, 10) / 1000;
+                cinema.cursorMs = cinema.startMs + frac * (cinema.endMs - cinema.startMs);
+                cinemaClearAllFx();
+                cinemaUpdateCursor();
+            });
+        })();
     </script>
 
     <!-- Authentication Modal -->
@@ -6000,5 +6524,30 @@
     <footer class="text-center" id="app-footer" style="background: #ffffff; color: #475569; font-size: 0.875rem; font-weight: 500; border-radius: 10px; margin: 5px 20px 20px; padding: 0.6rem;">
         MeshConsole by <a href="https://m9wav.uk/" target="_blank" rel="noopener" style="color: #2563eb; text-decoration: none;">M9WAV</a> <a href="https://github.com/m9wav/MeshConsole" target="_blank" rel="noopener" style="color: #475569; margin-left: 8px;"><i class="bi bi-github"></i></a>
     </footer>
+
+    <script>
+        // PWA: register the service worker once the page is loaded. Best-effort
+        // — silently no-ops on browsers without SW support or insecure contexts.
+        if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/service-worker.js').catch(() => {});
+            });
+        }
+        // Share-target intent: a meshtastic.org/e/# URL shared into the PWA
+        // arrives as ?share=<url>. Pop it into the channel-import flow.
+        (function handleShareTarget() {
+            const params = new URLSearchParams(location.search);
+            const shared = params.get('share') || params.get('url');
+            if (!shared) return;
+            if (/meshtastic\.org\/e\/#/.test(shared)) {
+                sessionStorage.setItem('mc:pendingChannelImport', shared);
+                // Switch to channels tab once Bootstrap is ready
+                document.addEventListener('DOMContentLoaded', () => {
+                    const tab = document.getElementById('channels-tab');
+                    if (tab) bootstrap.Tab.getOrCreateInstance(tab).show();
+                });
+            }
+        })();
+    </script>
 </body>
 </html>

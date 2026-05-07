@@ -13,10 +13,69 @@ import json
 import logging
 import sqlite3
 import threading
+import time
 from datetime import datetime, timedelta
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+
+# zstd frame magic — first 4 bytes of every zstd-compressed blob.
+# Used to distinguish compressed BLOB raw_packet rows from legacy JSON TEXT.
+_ZSTD_MAGIC = b'\x28\xb5\x2f\xfd'
+
+try:
+    import zstandard as _zstd
+    _ZSTD_COMPRESSOR = _zstd.ZstdCompressor(level=3)
+    _ZSTD_DECOMPRESSOR = _zstd.ZstdDecompressor()
+    ZSTD_AVAILABLE = True
+except ImportError:
+    _ZSTD_COMPRESSOR = None
+    _ZSTD_DECOMPRESSOR = None
+    ZSTD_AVAILABLE = False
+    logger.info("zstandard not installed — raw_packet storage stays uncompressed")
+
+
+def encode_raw_packet(raw_packet) -> 'str | bytes':
+    """Serialise a raw_packet dict for DB storage.
+
+    Returns zstd-compressed BLOB when zstandard is available, else JSON TEXT
+    so old deployments without the dependency keep working. Compressed blobs
+    start with the zstd magic ``28 b5 2f fd`` so readers can detect them.
+    """
+    payload = json.dumps(raw_packet, default=str)
+    if _ZSTD_COMPRESSOR is not None:
+        return _ZSTD_COMPRESSOR.compress(payload.encode('utf-8'))
+    return payload
+
+
+def decode_raw_packet(stored) -> dict:
+    """Reverse ``encode_raw_packet`` — works on TEXT, BLOB, or pre-decoded dict.
+
+    Detects compressed blobs by the zstd magic bytes so legacy JSON-TEXT rows
+    still decode without a migration step.
+    """
+    if stored is None or stored == '':
+        return {}
+    if isinstance(stored, dict):
+        return stored
+    if isinstance(stored, (bytes, bytearray, memoryview)):
+        b = bytes(stored)
+        if b[:4] == _ZSTD_MAGIC and _ZSTD_DECOMPRESSOR is not None:
+            try:
+                b = _ZSTD_DECOMPRESSOR.decompress(b)
+            except Exception:
+                pass  # corrupted frame — fall through to JSON parse
+        try:
+            return json.loads(b.decode('utf-8'))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return {}
+    if isinstance(stored, str):
+        try:
+            return json.loads(stored)
+        except json.JSONDecodeError:
+            return {}
+    return {}
 
 
 class DatabaseHandler:
@@ -28,6 +87,9 @@ class DatabaseHandler:
         self._setup_database()
         self._migrate_backend_column()
         self._migrate_device_id_column()
+        self._setup_nodes_live()
+        self._prune_thread = None
+        self._prune_stop = threading.Event()
 
     def _setup_database(self):
         """Set up SQLite database for message and packet logging."""
@@ -145,6 +207,243 @@ class DatabaseHandler:
         except sqlite3.Error as e:
             logger.error(f"Database device_id migration error: {e}")
 
+    def _setup_nodes_live(self):
+        """Materialised per-node summary table (v3.15.0).
+
+        ``_get_nodeinfo_entries`` and friends used to scan the entire packets
+        table on every cache miss. With ~3.5 k known nodes that's a lot of
+        repeated JSON parsing. This table holds one row per (full_key,
+        backend) pair and is updated incrementally by the orchestrator on
+        every NODEINFO arrival, so the hot path becomes O(nodes) instead of
+        O(packets).
+        """
+        try:
+            self.cursor.execute('''
+                CREATE TABLE IF NOT EXISTS nodes_live (
+                    full_key TEXT NOT NULL,
+                    backend TEXT NOT NULL,
+                    name TEXT,
+                    hash_byte TEXT,
+                    lat REAL,
+                    lon REAL,
+                    has_gps INTEGER DEFAULT 0,
+                    nodeinfo_count INTEGER DEFAULT 0,
+                    min_path_len INTEGER,
+                    last_seen TEXT,
+                    PRIMARY KEY (full_key, backend)
+                )
+            ''')
+            self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_nodes_live_hash ON nodes_live(hash_byte, backend)')
+            self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_nodes_live_last_seen ON nodes_live(last_seen DESC)')
+            self.conn.commit()
+        except sqlite3.Error as e:
+            logger.error(f"nodes_live setup error: {e}")
+
+    def upsert_node(self, full_key: str, backend: str, name: str = '',
+                    lat: float | None = None, lon: float | None = None,
+                    timestamp: str | None = None, path_len: int | None = None):
+        """Record/update a NODEINFO observation in nodes_live.
+
+        Increments ``nodeinfo_count`` on each call. ``min_path_len`` only
+        decreases — the closest the node has ever been heard from. ``has_gps``
+        flips to 1 the first time we see plausible non-zero coords; it doesn't
+        revert on a later 0,0 broadcast (which we treat as missing GPS, not
+        deliberate teleportation to the Atlantic).
+        """
+        if not full_key:
+            return
+        full_key = full_key.lower()
+        hash_byte = full_key[:2]
+        ts = timestamp or datetime.now().isoformat()
+        has_gps = int(
+            lat is not None and lon is not None
+            and abs(float(lat)) > 0.01 and abs(float(lon)) > 0.01
+        )
+        with self.lock:
+            try:
+                self.cursor.execute(
+                    'SELECT name, lat, lon, has_gps, nodeinfo_count, min_path_len FROM nodes_live WHERE full_key=? AND backend=?',
+                    (full_key, backend),
+                )
+                row = self.cursor.fetchone()
+                if row:
+                    new_name = name or row[0] or ''
+                    new_lat = lat if has_gps else row[1]
+                    new_lon = lon if has_gps else row[2]
+                    new_has_gps = max(int(row[3] or 0), has_gps)
+                    new_count = (row[4] or 0) + 1
+                    new_min_path = (
+                        path_len if row[5] is None
+                        else min(row[5], path_len) if path_len is not None
+                        else row[5]
+                    )
+                    self.cursor.execute(
+                        'UPDATE nodes_live SET name=?, lat=?, lon=?, has_gps=?, '
+                        'nodeinfo_count=?, min_path_len=?, last_seen=? '
+                        'WHERE full_key=? AND backend=?',
+                        (new_name, new_lat, new_lon, new_has_gps,
+                         new_count, new_min_path, ts, full_key, backend),
+                    )
+                else:
+                    self.cursor.execute(
+                        'INSERT INTO nodes_live VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                        (full_key, backend, name, hash_byte,
+                         lat if has_gps else None, lon if has_gps else None,
+                         has_gps, 1, path_len, ts),
+                    )
+                self.conn.commit()
+            except sqlite3.Error as e:
+                logger.error(f"upsert_node error: {e}")
+
+    def fetch_nodes_live(self, backend: str | None = None) -> list[dict]:
+        """Return all rows from nodes_live, optionally filtered by backend."""
+        with self.lock:
+            try:
+                if backend:
+                    self.cursor.execute(
+                        'SELECT full_key, backend, name, hash_byte, lat, lon, has_gps, '
+                        'nodeinfo_count, min_path_len, last_seen FROM nodes_live WHERE backend=?',
+                        (backend,),
+                    )
+                else:
+                    self.cursor.execute(
+                        'SELECT full_key, backend, name, hash_byte, lat, lon, has_gps, '
+                        'nodeinfo_count, min_path_len, last_seen FROM nodes_live'
+                    )
+                rows = self.cursor.fetchall()
+            except sqlite3.Error as e:
+                logger.error(f"fetch_nodes_live error: {e}")
+                return []
+        return [
+            {
+                'full_key': r[0], 'backend': r[1], 'name': r[2] or '',
+                'hash_byte': r[3] or '', 'lat': r[4], 'lon': r[5],
+                'has_gps': bool(r[6]), 'nodeinfo_count': r[7] or 0,
+                'min_path_len': r[8], 'last_seen': r[9] or '',
+            }
+            for r in rows
+        ]
+
+    def backfill_nodes_live(self) -> int:
+        """One-shot backfill from existing packets — runs once at startup if
+        the table is empty so existing deployments don't have to wait for
+        new NODEINFO arrivals to populate it.
+
+        Returns the number of distinct nodes seeded.
+        """
+        with self.lock:
+            try:
+                self.cursor.execute('SELECT COUNT(*) FROM nodes_live')
+                if (self.cursor.fetchone()[0] or 0) > 0:
+                    return 0
+                self.cursor.execute(
+                    "SELECT raw_packet, MAX(timestamp), backend, COUNT(*) "
+                    "FROM packets WHERE port_name IN ('NODEINFO','NODEINFO_APP') "
+                    "GROUP BY from_id, backend"
+                )
+                rows = self.cursor.fetchall()
+            except sqlite3.Error as e:
+                logger.error(f"backfill_nodes_live: query failed: {e}")
+                return 0
+
+        seeded = 0
+        for raw, latest_ts, backend, count in rows:
+            try:
+                rp = decode_raw_packet(raw)
+                full_key = (rp.get('public_key') or rp.get('adv_key') or '').lower()
+                if not full_key:
+                    continue
+                lat = rp.get('adv_lat') or rp.get('latitude')
+                lon = rp.get('adv_lon') or rp.get('longitude')
+                self.upsert_node(
+                    full_key=full_key,
+                    backend=backend or 'meshcore',
+                    name=rp.get('adv_name') or rp.get('name') or '',
+                    lat=lat, lon=lon,
+                    timestamp=latest_ts,
+                    path_len=rp.get('path_len'),
+                )
+                # backfill records each row as if it were a single observation;
+                # bump count to reflect aggregate
+                if count and count > 1:
+                    with self.lock:
+                        try:
+                            self.cursor.execute(
+                                'UPDATE nodes_live SET nodeinfo_count=? '
+                                'WHERE full_key=? AND backend=?',
+                                (count, full_key, backend or 'meshcore'),
+                            )
+                            self.conn.commit()
+                        except sqlite3.Error:
+                            pass
+                seeded += 1
+            except Exception:
+                continue
+        if seeded:
+            logger.info(f"backfill_nodes_live: seeded {seeded} nodes from packets history")
+        return seeded
+
+    def prune_old_packets(self, max_age_days: int) -> dict:
+        """Delete packets and messages older than ``max_age_days``.
+
+        Returns a dict with row counts and elapsed seconds. Runs VACUUM
+        INCREMENTAL after deletion to reclaim space without locking the DB.
+        """
+        if not max_age_days or max_age_days <= 0:
+            return {'packets_deleted': 0, 'messages_deleted': 0, 'elapsed': 0.0}
+        cutoff = (datetime.now() - timedelta(days=max_age_days)).isoformat()
+        t0 = time.time()
+        with self.lock:
+            try:
+                self.cursor.execute('DELETE FROM packets WHERE timestamp < ?', (cutoff,))
+                pkts = self.cursor.rowcount
+                self.cursor.execute('DELETE FROM messages WHERE timestamp < ?', (cutoff,))
+                msgs = self.cursor.rowcount
+                self.conn.commit()
+                # WAL checkpoint then incremental vacuum (best-effort)
+                try:
+                    self.conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+                    self.conn.execute('PRAGMA incremental_vacuum')
+                except sqlite3.Error:
+                    pass
+            except sqlite3.Error as e:
+                logger.error(f"prune_old_packets failed: {e}")
+                return {'packets_deleted': 0, 'messages_deleted': 0, 'elapsed': time.time() - t0, 'error': str(e)}
+        return {'packets_deleted': pkts, 'messages_deleted': msgs, 'elapsed': time.time() - t0}
+
+    def start_prune_thread(self, max_age_days: int, interval_seconds: int = 3600):
+        """Start a daemon thread that prunes older-than-max_age_days rows
+        every ``interval_seconds``. No-op if max_age_days is falsy.
+        """
+        if not max_age_days or max_age_days <= 0 or self._prune_thread is not None:
+            return
+
+        def _loop():
+            # Stagger first run so service startup isn't slowed
+            if self._prune_stop.wait(60):
+                return
+            while not self._prune_stop.is_set():
+                try:
+                    result = self.prune_old_packets(max_age_days)
+                    if result.get('packets_deleted') or result.get('messages_deleted'):
+                        logger.info(
+                            f"Auto-prune: removed {result['packets_deleted']} packets, "
+                            f"{result['messages_deleted']} messages older than {max_age_days}d "
+                            f"in {result['elapsed']:.1f}s"
+                        )
+                except Exception as e:
+                    logger.warning(f"Auto-prune iteration failed: {e}")
+                if self._prune_stop.wait(interval_seconds):
+                    return
+
+        self._prune_thread = threading.Thread(target=_loop, daemon=True, name='db-prune')
+        self._prune_thread.start()
+        logger.info(f"Auto-prune thread started (max_age_days={max_age_days}, interval={interval_seconds}s)")
+
+    def stop_prune_thread(self):
+        """Signal the prune thread to exit (called during shutdown)."""
+        self._prune_stop.set()
+
     def log_message(self, timestamp, from_id, to_id, port_name, message, backend='meshtastic', device_id=''):
         """Log the message to the SQLite database, skipping duplicates.
 
@@ -203,7 +502,7 @@ class DatabaseHandler:
                         d['to_id'],
                         d['port_name'],
                         d.get('payload', ''),
-                        json.dumps(d.get('raw_packet', {})),
+                        encode_raw_packet(d.get('raw_packet', {})),
                         backend,
                         device_id,
                     )
@@ -295,7 +594,7 @@ class DatabaseHandler:
             packets = []
             for row in rows:
                 try:
-                    raw_packet = json.loads(row[5]) if row[5] else {}
+                    raw_packet = decode_raw_packet(row[5])
                     pkt_backend = row[6] if len(row) > 6 else 'meshtastic'
 
                     # Resolve from_name / to_name based on backend
@@ -390,7 +689,7 @@ class DatabaseHandler:
             row = self.cursor.fetchone()
             if row and row[0]:
                 try:
-                    raw_packet = json.loads(row[0])
+                    raw_packet = decode_raw_packet(row[0])
                     pkt_backend = row[1] if len(row) > 1 else 'meshtastic'
                     if pkt_backend == 'meshcore' or node_id.startswith('mc:'):
                         # MeshCore: name stored at top level of raw_packet

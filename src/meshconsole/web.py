@@ -26,6 +26,7 @@ from functools import wraps
 from flask import Flask, render_template, jsonify, Response, request, session
 from flask_cors import CORS
 
+from meshconsole.database import decode_raw_packet
 from meshconsole.models import BackendType
 
 logger = logging.getLogger(__name__)
@@ -87,6 +88,48 @@ def _make_require_auth(config):
     return require_auth
 
 
+def _generate_brand_icon(size: int) -> bytes:
+    """Render a flat-colour PNG of the given square size — used as the PWA
+    icon so we don't have to ship binary assets in the package.
+
+    Hand-rolled with stdlib (struct + zlib) to avoid pulling in Pillow.
+    The icon is a solid #0a1628 background with a centred light-blue
+    "ring" (broadcast vibe) — enough to be recognisable on a launcher."""
+    import struct
+    import zlib
+
+    bg = (10, 22, 40)        # --primary-color background
+    ring = (96, 165, 250)    # accent
+    # Build pixel rows: a thin ring at ~38–46% radius
+    cx = cy = (size - 1) / 2
+    r_outer = size * 0.46
+    r_inner = size * 0.38
+    # Inner dot
+    r_dot = size * 0.10
+
+    rows = bytearray()
+    for y in range(size):
+        rows.append(0)  # PNG filter byte (None)
+        for x in range(size):
+            dx = x - cx
+            dy = y - cy
+            d = (dx * dx + dy * dy) ** 0.5
+            if r_inner <= d <= r_outer or d <= r_dot:
+                r, g, b = ring
+            else:
+                r, g, b = bg
+            rows.extend((r, g, b))
+
+    def _chunk(tag: bytes, data: bytes) -> bytes:
+        return (struct.pack('>I', len(data)) + tag + data
+                + struct.pack('>I', zlib.crc32(tag + data) & 0xFFFFFFFF))
+
+    sig = b'\x89PNG\r\n\x1a\n'
+    ihdr = struct.pack('>IIBBBBB', size, size, 8, 2, 0, 0, 0)  # 8-bit RGB
+    idat = zlib.compress(bytes(rows), 6)
+    return sig + _chunk(b'IHDR', ihdr) + _chunk(b'IDAT', idat) + _chunk(b'IEND', b'')
+
+
 # ── App factory ───────────────────────────────────────────────────
 
 def create_app(orchestrator):
@@ -133,7 +176,102 @@ def create_app(orchestrator):
     @app.route('/')
     def index():
         from meshconsole import __version__
-        return render_template('index.html', version=__version__)
+        rendered = render_template('index.html', version=__version__)
+        # Never cache the HTML shell — we iterate on it during tests and the
+        # SW would otherwise serve a stale copy until the next version bump.
+        return Response(rendered, mimetype='text/html', headers={
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0',
+        })
+
+    @app.route('/manifest.webmanifest')
+    def pwa_manifest():
+        """PWA manifest (v3.15.0). Lets users install MeshConsole as a
+        standalone app and registers the channel-URL share-target."""
+        return jsonify({
+            "name": "MeshConsole",
+            "short_name": "MeshConsole",
+            "description": "Live monitoring and control for Meshtastic and MeshCore mesh radio networks",
+            "start_url": "/",
+            "scope": "/",
+            "display": "standalone",
+            "orientation": "any",
+            "background_color": "#0a1628",
+            "theme_color": "#0a1628",
+            "icons": [
+                {"src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
+                {"src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"},
+            ],
+            "share_target": {
+                "action": "/",
+                "method": "GET",
+                "params": {"title": "title", "text": "share", "url": "share"},
+            },
+        })
+
+    @app.route('/static/icon-<int:size>.png')
+    def pwa_icon(size):
+        """Generate a brand-coloured PNG icon at request time so we don't
+        ship binary assets in the package. Cached aggressively by the SW."""
+        if size not in (192, 512):
+            return Response(status=404)
+        png = _generate_brand_icon(size)
+        return Response(png, mimetype='image/png',
+                        headers={'Cache-Control': 'public, max-age=86400'})
+
+    @app.route('/service-worker.js')
+    def pwa_service_worker():
+        """Tiny service worker — caches the app shell so the UI loads
+        instantly on repeat visits and survives brief network blips. Live
+        data still flows from /stream and the JSON endpoints, never cached.
+        """
+        # Bumping the cache name on each release invalidates the old shell.
+        from meshconsole import __version__
+        sw = """
+const CACHE = 'meshconsole-shell-VERSION';
+// Don't cache the HTML root — we want every visit to fetch the latest UI.
+// The SW still caches static assets like icons + the manifest.
+const SHELL = ['/manifest.webmanifest'];
+
+self.addEventListener('install', (event) => {
+    event.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)));
+    self.skipWaiting();
+});
+
+self.addEventListener('activate', (event) => {
+    event.waitUntil(
+        caches.keys().then(names => Promise.all(
+            names.filter(n => n !== CACHE).map(n => caches.delete(n))
+        ))
+    );
+    self.clients.claim();
+});
+
+self.addEventListener('fetch', (event) => {
+    const req = event.request;
+    if (req.method !== 'GET') return;
+    const url = new URL(req.url);
+    // Never cache live data, control endpoints, SSE, or the HTML root.
+    if (url.pathname === '/' || url.pathname.endsWith('.html')) return;
+    const live = ['/packets','/nodes','/stats','/stream','/cinema/','/channels',
+                  '/network-map-data','/mesh-graph','/conversations','/messages',
+                  '/auth/','/send-','/api/'];
+    if (live.some(p => url.pathname.startsWith(p))) return;
+    // App shell: cache-first, then network. Mismatched cache reads fall back
+    // to network so a stale entry never wedges the UI.
+    event.respondWith(
+        caches.match(req).then(hit => hit || fetch(req).then(resp => {
+            if (resp && resp.ok && url.origin === location.origin) {
+                const clone = resp.clone();
+                caches.open(CACHE).then(c => c.put(req, clone));
+            }
+            return resp;
+        }).catch(() => hit))
+    );
+});
+""".replace('VERSION', __version__)
+        return Response(sw, mimetype='application/javascript')
 
     @app.route('/auth/login', methods=['POST'])
     def login():
@@ -1056,7 +1194,7 @@ def create_app(orchestrator):
                         'to_id': packet[2],
                         'port_name': packet[3],
                         'payload': packet[4],
-                        'raw_packet': json.loads(packet[5])
+                        'raw_packet': decode_raw_packet(packet[5])
                     })
 
                 response_data = json.dumps(data, default=orchestrator._json_serializer, indent=2)
@@ -1110,6 +1248,134 @@ def create_app(orchestrator):
 
         return Response(generate(), mimetype='text/event-stream',
                         headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+
+    # ── Mesh Cinema (v3.15.0) ─────────────────────────────
+
+    @app.route('/cinema/window')
+    def cinema_window():
+        """Time-windowed packet + node data for Mesh Cinema replay.
+
+        Query params:
+          start: ISO-8601 timestamp (default: 1h ago)
+          end:   ISO-8601 timestamp (default: now)
+          max_packets: cap (default 5000) — protects mobile clients from
+                       windows that select hundreds of thousands of rows
+          backend: 'meshcore' | 'meshtastic' | None (both)
+
+        Returns:
+          {
+            'start': ISO,
+            'end': ISO,
+            'nodes': [{full_key, name, lat, lon, backend, hash_byte}, ...],
+            'packets': [
+              {ts, from_id, to_id, port_name, backend,
+               hops: [{name?, lat?, lon?, hash}, ...]}
+            ],
+            'truncated': bool,
+          }
+        """
+        try:
+            now = datetime.now()
+            start_param = request.args.get('start', (now - timedelta(hours=1)).isoformat())
+            end_param = request.args.get('end', now.isoformat())
+            max_packets = max(1, min(20000, int(request.args.get('max_packets', 5000))))
+            backend_param = request.args.get('backend')
+
+            cache_key = f"cinema:{start_param}:{end_param}:{max_packets}:{backend_param or '-'}"
+            cached = _cache.get(cache_key, ttl=15)
+            if cached:
+                return Response(cached, mimetype='application/json')
+
+            params: list = [start_param, end_param]
+            backend_clause = ''
+            if backend_param in ('meshcore', 'meshtastic'):
+                backend_clause = ' AND backend = ?'
+                params.append(backend_param)
+
+            with orchestrator.db_handler.lock:
+                orchestrator.db_handler.cursor.execute(
+                    f"""SELECT timestamp, from_id, to_id, port_name, backend, raw_packet
+                        FROM packets
+                        WHERE timestamp >= ? AND timestamp <= ?{backend_clause}
+                        ORDER BY timestamp ASC
+                        LIMIT ?""",
+                    (*params, max_packets + 1),
+                )
+                rows = orchestrator.db_handler.cursor.fetchall()
+
+            truncated = len(rows) > max_packets
+            rows = rows[:max_packets]
+
+            # Index nodes_live for fast hop coord lookup
+            nodes_by_name: dict[str, dict] = {}
+            nodes_by_full: dict[str, dict] = {}
+            nodes_out: list[dict] = []
+            for n in orchestrator.db_handler.fetch_nodes_live():
+                if n['has_gps'] and n['lat'] is not None and n['lon'] is not None:
+                    nodes_by_full[n['full_key']] = n
+                    if n['name']:
+                        nodes_by_name.setdefault(n['name'], n)
+                    nodes_out.append({
+                        'full_key': n['full_key'],
+                        'name': n['name'] or n['full_key'][:12],
+                        'lat': n['lat'], 'lon': n['lon'],
+                        'backend': n['backend'],
+                        'hash_byte': n['hash_byte'],
+                    })
+
+            packets: list[dict] = []
+            for ts, from_id, to_id, port_name, backend, raw in rows:
+                rp = decode_raw_packet(raw)
+                hops: list[dict] = []
+
+                # MeshCore: decode the path hex into named hops with coords
+                if backend == 'meshcore':
+                    path_hex = rp.get('path', '') if isinstance(rp, dict) else ''
+                    hash_size = (rp.get('path_hash_size') or 1) if isinstance(rp, dict) else 1
+                    if path_hex and len(path_hex) >= 2 * hash_size:
+                        for hop in orchestrator.decode_route(path_hex, hash_size):
+                            hop_name = hop.get('name')
+                            coord = nodes_by_name.get(hop_name) if hop_name else None
+                            hops.append({
+                                'name': hop_name,
+                                'hash': hop.get('hash'),
+                                'lat': coord['lat'] if coord else None,
+                                'lon': coord['lon'] if coord else None,
+                                'confidence': hop.get('confidence', 0),
+                            })
+
+                # Sender coords (when known) help the renderer place the line origin
+                from_coord = None
+                if backend == 'meshcore':
+                    fk_prefix = (from_id or '').replace('mc:', '').lower()
+                    for fk, n in nodes_by_full.items():
+                        if fk.startswith(fk_prefix):
+                            from_coord = (n['lat'], n['lon'])
+                            break
+
+                packets.append({
+                    'ts': ts,
+                    'from_id': from_id,
+                    'to_id': to_id,
+                    'port_name': port_name,
+                    'backend': backend,
+                    'hops': hops,
+                    'from_lat': from_coord[0] if from_coord else None,
+                    'from_lon': from_coord[1] if from_coord else None,
+                })
+
+            resp = json.dumps({
+                'start': start_param,
+                'end': end_param,
+                'nodes': nodes_out,
+                'packets': packets,
+                'truncated': truncated,
+            })
+            _cache.set(cache_key, resp)
+            return Response(resp, mimetype='application/json')
+        except Exception as e:
+            logger.error(f"Error in /cinema/window: {e}")
+            return jsonify({'error': str(e), 'nodes': [], 'packets': []}), 500
 
     # ── Device telemetry ──────────────────────────────────
 

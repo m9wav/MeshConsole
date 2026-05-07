@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "meshconsole"
-version = "3.14.10"
+version = "3.15.0"
 description = "A powerful CLI and web interface for Meshtastic and MeshCore mesh networking devices"
 readme = "README.md"
 license = "MIT"
@@ -35,6 +35,7 @@ dependencies = [
     "pypubsub>=4.0.0",
     "pyserial>=3.5",
     "requests>=2.25.0",
+    "zstandard>=0.21.0",
 ]
 
 [project.optional-dependencies]
