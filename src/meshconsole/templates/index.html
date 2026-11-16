@@ -827,6 +827,9 @@
         .sse-indicator.connected { background: var(--success-color); animation: pulse 2s infinite; }
         .sse-indicator.disconnected { background: var(--secondary-color); }
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+        /* Basemap: OpenStreetMap tiles need no API key; dark mode is the
+           same tiles colour-inverted (CARTO's keyless basemaps were withdrawn). */
+        .mc-basemap-dark { filter: invert(1) hue-rotate(180deg) brightness(0.95) contrast(0.9); }
     </style>
 </head>
 <body>
@@ -4747,6 +4750,15 @@
             }
         }
 
+        // Keyless basemap shared by the network map and Mesh Cinema.
+        function mcBasemapLayer(dark) {
+            return L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+                maxZoom: 19,
+                className: dark ? 'mc-basemap-dark' : '',
+            });
+        }
+
         let networkMapState = {
             map: null,
             markers: {},        // id -> marker
@@ -4775,14 +4787,7 @@
             }).setView([52.0, -2.0], 6);
 
             networkMapState.darkTheme = document.body.classList.contains('theme-dark');
-            const tileUrl = networkMapState.darkTheme
-                ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
-                : 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
-            networkMapState.tileLayer = L.tileLayer(tileUrl, {
-                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
-                maxZoom: 19,
-                subdomains: 'abcd',
-            }).addTo(map);
+            networkMapState.tileLayer = mcBasemapLayer(networkMapState.darkTheme).addTo(map);
 
             L.control.zoom({position: 'topleft'}).addTo(map);
 
@@ -5157,12 +5162,7 @@
             const btn = document.getElementById('network-map-theme-btn');
             networkMapState.darkTheme = !networkMapState.darkTheme;
             if (networkMapState.tileLayer) map.removeLayer(networkMapState.tileLayer);
-            const url = networkMapState.darkTheme
-                ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
-                : 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
-            networkMapState.tileLayer = L.tileLayer(url, {
-                attribution: '&copy; OSM &copy; CARTO', maxZoom: 19, subdomains: 'abcd',
-            }).addTo(map);
+            networkMapState.tileLayer = mcBasemapLayer(networkMapState.darkTheme).addTo(map);
             if (btn) btn.innerHTML = networkMapState.darkTheme ? '<i class="bi bi-sun"></i>' : '<i class="bi bi-moon"></i>';
         }
 
@@ -6169,14 +6169,7 @@
                 preferCanvas: true,
             }).setView([52.0, -2.0], 6);
             const isDark = document.body.classList.contains('theme-dark');
-            const tileUrl = isDark
-                ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
-                : 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
-            L.tileLayer(tileUrl, {
-                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
-                maxZoom: 19,
-                subdomains: 'abcd',
-            }).addTo(cinema.map);
+            mcBasemapLayer(isDark).addTo(cinema.map);
             cinema.nodeLayer = L.layerGroup().addTo(cinema.map);
             cinema.fxLayer = L.layerGroup().addTo(cinema.map);
             cinema.initialized = true;
