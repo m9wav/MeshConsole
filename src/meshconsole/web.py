@@ -12,6 +12,7 @@ License: MIT
 """
 
 import configparser
+import gzip
 import hashlib
 import importlib.resources
 import json
@@ -19,6 +20,7 @@ import logging
 import os
 import secrets
 import time
+import zlib
 
 from datetime import datetime, timedelta
 from functools import wraps
@@ -170,6 +172,43 @@ def create_app(orchestrator):
 
     require_auth = _make_require_auth(config)
     _cache = _ResponseCache()
+
+    # ── Response compression ──────────────────────────────────
+    # The JSON feeds and the HTML shell are large and highly repetitive
+    # (the packet feed is ~6 MB raw, under 1 MB gzipped). Compress here so
+    # it works out of the box, with or without a reverse proxy in front.
+    _gzip_types = {'application/json', 'text/html', 'application/javascript',
+                   'text/css', 'text/plain', 'application/manifest+json'}
+    _gzip_memo = {}  # request path -> (crc32, length, compressed bytes)
+
+    @app.after_request
+    def _compress_response(resp):
+        if (resp.status_code != 200
+                or resp.direct_passthrough
+                or resp.is_streamed               # SSE /stream must not buffer
+                or 'Content-Encoding' in resp.headers
+                or resp.mimetype not in _gzip_types
+                or 'gzip' not in request.headers.get('Accept-Encoding', '').lower()):
+            return resp
+        data = resp.get_data()
+        if len(data) < 1024:
+            return resp
+        # Cached endpoints return identical bytes for many requests in a
+        # row; a checksum is far cheaper than compressing them again.
+        key = request.full_path
+        crc = zlib.crc32(data)
+        memo = _gzip_memo.get(key)
+        if memo and memo[0] == crc and memo[1] == len(data):
+            compressed = memo[2]
+        else:
+            compressed = gzip.compress(data, compresslevel=5)
+            if len(_gzip_memo) >= 64:
+                _gzip_memo.clear()
+            _gzip_memo[key] = (crc, len(data), compressed)
+        resp.set_data(compressed)
+        resp.headers['Content-Encoding'] = 'gzip'
+        resp.headers.add('Vary', 'Accept-Encoding')
+        return resp
 
     # ── Routes ────────────────────────────────────────────────
 
@@ -476,39 +515,15 @@ self.addEventListener('fetch', (event) => {
             if cached:
                 return Response(cached, mimetype='application/json')
 
-            with orchestrator.db_handler.lock:
-                # Build query with optional backend filter
-                query = '''
-                    SELECT p.from_id, p.raw_packet, p.timestamp, p.backend
-                    FROM packets p
-                    INNER JOIN (
-                        SELECT from_id, MAX(timestamp) as max_ts
-                        FROM packets
-                        WHERE port_name IN ('NODEINFO_APP', 'NODEINFO')
-                '''
-                params = []
-                if backend_filter:
-                    query += ' AND backend = ?'
-                    params.append(backend_filter)
-                query += '''
-                        GROUP BY from_id
-                    ) latest ON p.from_id = latest.from_id AND p.timestamp = latest.max_ts
-                    WHERE p.port_name IN ('NODEINFO_APP', 'NODEINFO')
-                '''
-                if backend_filter:
-                    query += ' AND p.backend = ?'
-                    params.append(backend_filter)
-                query += ' ORDER BY p.timestamp DESC'
-
-                orchestrator.db_handler.cursor.execute(query, params)
-                rows = orchestrator.db_handler.cursor.fetchall()
+            rows = orchestrator.db_handler.fetch_latest_per_node(
+                ('NODEINFO_APP', 'NODEINFO'), backend=backend_filter or None)
 
             nodes_by_id = {}
             db_names = {}  # fallback names from raw_packet
             for row in rows:
                 try:
                     node_id = row[0]
-                    raw_packet = json.loads(row[1]) if row[1] else {}
+                    raw_packet = decode_raw_packet(row[1])
                     node_backend = row[3] if len(row) > 3 and row[3] else ('meshcore' if node_id.startswith('mc:') else 'meshtastic')
 
                     if node_backend == 'meshcore':
@@ -538,7 +553,7 @@ self.addEventListener('fetch', (event) => {
                     continue
 
             # Bulk-resolve live names and short names
-            live_names = orchestrator.resolve_node_names_bulk(list(nodes_by_id.keys()))
+            live_names = orchestrator.resolve_node_names_bulk(list(nodes_by_id.keys()), db_fallback=False)
             short_names = orchestrator.node_short_name_map
             for node_id, node in nodes_by_id.items():
                 live_name = live_names.get(node_id, node_id)
@@ -1012,19 +1027,8 @@ self.addEventListener('fetch', (event) => {
                     pass
 
             # Source 2: most recent position/nodeinfo per node from DB
-            with orchestrator.db_handler.lock:
-                orchestrator.db_handler.cursor.execute('''
-                    SELECT p.from_id, p.raw_packet, p.timestamp, p.backend
-                    FROM packets p
-                    INNER JOIN (
-                        SELECT from_id, MAX(timestamp) AS max_ts
-                        FROM packets
-                        WHERE port_name IN ('POSITION_APP', 'NODEINFO', 'NODEINFO_APP')
-                        GROUP BY from_id
-                    ) latest ON p.from_id = latest.from_id AND p.timestamp = latest.max_ts
-                    WHERE p.port_name IN ('POSITION_APP', 'NODEINFO', 'NODEINFO_APP')
-                ''')
-                rows = orchestrator.db_handler.cursor.fetchall()
+            rows = orchestrator.db_handler.fetch_latest_per_node(
+                ('POSITION_APP', 'NODEINFO', 'NODEINFO_APP'))
 
             # First pass: collect nodes with coordinates and their DB-level names
             pending_nodes = []
@@ -1033,7 +1037,7 @@ self.addEventListener('fetch', (event) => {
                 if from_id in seen_ids:
                     continue
                 try:
-                    raw = json.loads(row[1]) if row[1] else {}
+                    raw = decode_raw_packet(row[1])
                     pkt_backend = row[3] if len(row) > 3 else 'meshtastic'
 
                     lat = lon = None
@@ -1062,7 +1066,7 @@ self.addEventListener('fetch', (event) => {
 
             # Bulk-resolve live names for all pending nodes
             if pending_nodes:
-                live_names = orchestrator.resolve_node_names_bulk([n['id'] for n in pending_nodes])
+                live_names = orchestrator.resolve_node_names_bulk([n['id'] for n in pending_nodes], db_fallback=False)
                 for n in pending_nodes:
                     live_name = live_names.get(n['id'], n['id'])
                     nodes_with_coords.append({

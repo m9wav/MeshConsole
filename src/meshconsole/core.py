@@ -17,6 +17,7 @@ Version: 3.4.4
 import argparse
 import configparser
 import json
+import math
 import logging
 import queue
 import signal
@@ -123,7 +124,6 @@ class GeoResolver:
     @staticmethod
     def _haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
         """Great-circle distance in km between two (lat, lon) points."""
-        import math
         R = 6371.0
         dlat = math.radians(lat2 - lat1)
         dlon = math.radians(lon2 - lon1)
@@ -154,35 +154,24 @@ class GeoResolver:
                         except (ValueError, TypeError):
                             pass
 
-        # Source 2: historical NODEINFO packets (fallback)
+        # Source 2: last known position per node (fallback). Read from the
+        # nodes_live summary table — one small row per node — rather than
+        # pulling every historical NODEINFO packet out of the packets table.
         try:
-            with db_handler.lock:
-                db_handler.cursor.execute(
-                    "SELECT from_id, raw_packet FROM packets "
-                    "WHERE port_name IN ('NODEINFO','NODEINFO_APP') "
-                    "AND backend='meshcore' ORDER BY timestamp DESC"
-                )
-                rows = db_handler.cursor.fetchall()
+            rows = db_handler.fetch_nodes_live(backend='meshcore')
         except Exception:
             rows = []
+        rows.sort(key=lambda r: r.get('last_seen') or '', reverse=True)
 
-        seen = set()
-        for from_id, raw_json in rows:
-            if from_id in seen:
+        for r in rows:
+            name = r.get('name') or ''
+            if not name or name in new_coords or not r.get('has_gps'):
                 continue
-            seen.add(from_id)
             try:
-                raw = decode_raw_packet(raw_json)
-                name = raw.get('adv_name', '')
-                if not name or name in new_coords:
-                    continue
-                lat = raw.get('adv_lat') or raw.get('latitude')
-                lon = raw.get('adv_lon') or raw.get('longitude')
-                if lat is not None and lon is not None:
-                    lat_f, lon_f = float(lat), float(lon)
-                    if abs(lat_f) <= 90 and abs(lon_f) <= 180 and abs(lat_f) > 0.01:
-                        new_coords[name] = (lat_f, lon_f)
-            except (ValueError, TypeError, json.JSONDecodeError):
+                lat_f, lon_f = float(r['lat']), float(r['lon'])
+                if abs(lat_f) <= 90 and abs(lon_f) <= 180 and abs(lat_f) > 0.01:
+                    new_coords[name] = (lat_f, lon_f)
+            except (ValueError, TypeError):
                 pass
 
         with self._lock:
@@ -218,8 +207,11 @@ class GeoResolver:
         Returns [(name, distance_score, confidence), ...] sorted by
         distance ascending (lower = better).  confidence is 0.0-1.0.
         """
+        # _coords is replaced wholesale on refresh, never mutated in place,
+        # so the reference is a consistent snapshot — no need to copy several
+        # thousand entries for every ambiguous hop.
         with self._lock:
-            coords = dict(self._coords)
+            coords = self._coords
 
         # Gather coordinates
         neighbor_coords = [(n, coords[n]) for n in resolved_neighbors if n in coords]
@@ -750,7 +742,9 @@ class MeshtasticTool:
         self._nodeinfo_evidence_cache = None  # (timestamp, {full_key: {count, min_path_len}})
         self._decode_route_cache: dict[tuple, list[dict]] = {}
         self._decode_route_gen: int = -1  # last generation seen
-        self._decode_route_lookup: tuple | None = None  # (hash_size, lookup, has_coords) for current gen
+        # hash_size -> (lookup, local_coords) for the current generation
+        self._decode_route_lookups: dict[int, tuple] = {}
+        self._decode_route_built: float = 0.0  # when the current generation started
         self._sse_subscribers: list[queue.Queue] = []
         self._sse_lock = threading.Lock()
         self.traceroute_completed = False
@@ -1858,9 +1852,9 @@ class MeshtasticTool:
             with self.db_handler.lock:
                 self.db_handler.cursor.execute('''
                     SELECT device_id, COUNT(*) FROM packets
-                    WHERE timestamp >= datetime('now', '-24 hours')
-                    GROUP BY device_id
-                ''')
+                    WHERE timestamp >= ?
+                    GROUP BY +device_id
+                ''', ((datetime.now() - timedelta(hours=24)).isoformat(),))
                 counts = {row[0]: row[1] for row in self.db_handler.cursor.fetchall()}
             for d in devices:
                 d['packet_count_24h'] = counts.get(d['device_id'], 0)
@@ -1875,10 +1869,13 @@ class MeshtasticTool:
         """Public resolve used by web routes."""
         return self._resolve_node_name(node_id)
 
-    def resolve_node_names_bulk(self, node_ids):
+    def resolve_node_names_bulk(self, node_ids, db_fallback=True):
         """Resolve multiple node IDs at once, returning a {id: name} dict.
 
         Avoids repeated backend iteration by building a single lookup map.
+        Pass ``db_fallback=False`` when the caller already holds the
+        database name for each node: it skips one query per unknown ID and
+        returns the ID itself for those.
         """
         result = {}
         unique_ids = set(node_ids)
@@ -1903,9 +1900,11 @@ class MeshtasticTool:
         for nid in unique_ids:
             if nid in name_map:
                 result[nid] = name_map[nid]
-            else:
+            elif db_fallback:
                 # Fallback to DB lookup only for IDs not in live caches
                 result[nid] = self.db_handler.lookup_node_name(nid)
+            else:
+                result[nid] = nid
 
         return result
 
@@ -2196,29 +2195,39 @@ class MeshtasticTool:
         if not path_hex:
             return []
 
-        # Check decode cache — invalidate when contacts or NODEINFO change
+        # Check decode cache — invalidate when contacts change, and at least
+        # once a minute so new NODEINFO evidence is picked up.
+        #
+        # The generation must not depend on anything the rebuild itself
+        # touches. It used to include the NODEINFO cache timestamp, which a
+        # rebuild refreshes — so on a slow machine every rebuild invalidated
+        # the cache it had just filled.
         gen = sum(
             getattr(b, '_contacts_generation', 0)
             for b in self.backends
             if b.backend_type == BackendType.MESHCORE
         )
-        if self._nodeinfo_parsed_cache:
-            gen += int(self._nodeinfo_parsed_cache[0])
-        if gen != self._decode_route_gen:
+        now = time.time()
+        if gen != self._decode_route_gen or now - self._decode_route_built > 60:
             self._decode_route_cache.clear()
+            self._decode_route_lookups.clear()
             self._decode_route_gen = gen
-            self._decode_route_lookup = None
+            self._decode_route_built = now
         cache_key = (path_hex, hash_size)
         cached = self._decode_route_cache.get(cache_key)
         if cached is not None:
             return cached
 
-        # Build the hash → candidate-names lookup once per generation per
-        # hash_size, gated on per-node evidence so flood-only strangers
-        # don't poison the buckets.
-        if self._decode_route_lookup is None or self._decode_route_lookup[0] != hash_size:
-            self._decode_route_lookup = (hash_size, *self._build_route_lookup(hash_size))
-        lookup: dict[str, list[str]] = self._decode_route_lookup[1]
+        # Build the hash → candidate-names lookup once per generation for
+        # each hash_size, gated on per-node evidence so flood-only strangers
+        # don't poison the buckets. One table per hash_size: a packet feed
+        # mixes 1-byte target lookups with 2- and 3-byte path hashes, and a
+        # single shared slot was rebuilt on every switch between them.
+        built = self._decode_route_lookups.get(hash_size)
+        if built is None:
+            built = self._build_route_lookup(hash_size)
+            self._decode_route_lookups[hash_size] = built
+        lookup: dict[str, list[str]] = built[0]
 
         # Phase 1: basic hash lookup
         step = hash_size * 2
@@ -2292,8 +2301,10 @@ class MeshtasticTool:
                 if confidence >= 0.7:
                     hop['ambiguous'] = False
 
-        # Store in decode cache (cap at 512 entries)
-        if len(self._decode_route_cache) >= 512:
+        # Store in decode cache. The cap must comfortably exceed one page of
+        # the packet feed (1000 packets, mostly unique paths, up to three
+        # decodes each) or every /packets request recomputes all of them.
+        if len(self._decode_route_cache) >= 8192:
             self._decode_route_cache.clear()
         self._decode_route_cache[cache_key] = hops
 

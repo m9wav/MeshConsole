@@ -36,6 +36,14 @@ except ImportError:
     logger.info("zstandard not installed — raw_packet storage stays uncompressed")
 
 
+def _cutoff_iso(hours: float) -> str:
+    """ISO timestamp ``hours`` ago, in the same local-time ISO format packets
+    are stored with, so it compares correctly against the timestamp column
+    (SQLite's ``datetime('now')`` is UTC and space-separated — neither matches).
+    """
+    return (datetime.now() - timedelta(hours=hours)).isoformat()
+
+
 def encode_raw_packet(raw_packet) -> 'str | bytes':
     """Serialise a raw_packet dict for DB storage.
 
@@ -524,8 +532,8 @@ class DatabaseHandler:
             params = []
 
             if hours:
-                conditions.append('timestamp >= datetime("now", ? || " hours")')
-                params.append(f'-{hours}')
+                conditions.append('timestamp >= ?')
+                params.append(_cutoff_iso(float(hours)))
 
             if backend:
                 conditions.append('backend = ?')
@@ -705,6 +713,47 @@ class DatabaseHandler:
                     pass
             return node_id
 
+    def fetch_latest_per_node(self, ports, backend=None):
+        """Newest packet per sending node among the given port names.
+
+        Returns ``[(from_id, raw_packet, timestamp, backend), ...]`` with one
+        row per ``from_id``, newest first; ``raw_packet`` is still encoded.
+
+        Finds the newest timestamp per (port, node) from the covering index,
+        then fetches exactly those rows by index lookup. The obvious
+        self-join made SQLite visit every packet of these port types — about
+        half the table on a busy mesh.
+        """
+        ports = list(ports)
+        placeholders = ','.join('?' * len(ports))
+        inner_filter = ' AND backend = ?' if backend else ''
+        params = ports + ([backend] if backend else [])
+        with self.lock:
+            self.cursor.execute(f'''
+                SELECT p.from_id, p.raw_packet, p.timestamp, p.backend
+                FROM (
+                    SELECT port_name AS pn, from_id AS fid, MAX(timestamp) AS mts
+                    FROM packets
+                    WHERE port_name IN ({placeholders}){inner_filter}
+                    GROUP BY port_name, from_id
+                ) latest
+                CROSS JOIN packets p INDEXED BY idx_packets_port_from_ts
+                    ON p.port_name = latest.pn
+                   AND p.from_id = latest.fid
+                   AND p.timestamp = latest.mts
+                ORDER BY p.timestamp DESC
+            ''', params)
+            rows = self.cursor.fetchall()
+
+        seen = set()
+        newest = []
+        for row in rows:
+            if row[0] in seen or (backend and row[3] != backend):
+                continue
+            seen.add(row[0])
+            newest.append(row)
+        return newest
+
     def fetch_packet_stats(self, backend=None):
         """Fetch packet statistics from the database.
 
@@ -755,20 +804,20 @@ class DatabaseHandler:
                            COUNT(*) as packet_count,
                            SUM(CASE WHEN port_name IN ('TEXT_MESSAGE_APP', 'TEXT_MESSAGE') THEN 1 ELSE 0 END) as message_count
                     FROM packets
-                    WHERE timestamp >= datetime('now', '-24 hours') AND backend = ?
+                    WHERE timestamp >= ? AND backend = ?
                     GROUP BY hour
                     ORDER BY hour DESC
-                ''', (backend,))
+                ''', (_cutoff_iso(24), backend))
             else:
                 self.cursor.execute('''
                     SELECT strftime('%Y-%m-%d %H', timestamp) as hour,
                            COUNT(*) as packet_count,
                            SUM(CASE WHEN port_name IN ('TEXT_MESSAGE_APP', 'TEXT_MESSAGE') THEN 1 ELSE 0 END) as message_count
                     FROM packets
-                    WHERE timestamp >= datetime('now', '-24 hours')
+                    WHERE timestamp >= ?
                     GROUP BY hour
                     ORDER BY hour DESC
-                ''')
+                ''', (_cutoff_iso(24),))
 
             for row in self.cursor.fetchall():
                 hour_key = row[0]
@@ -840,25 +889,24 @@ class DatabaseHandler:
         """Return network health metrics for the last hour."""
         with self.lock:
             try:
-                where = "WHERE timestamp >= datetime('now', '-1 hours')"
-                params = []
+                # One pass over the last hour's rows via the timestamp index.
+                # The unary plus stops SQLite picking the from_id index for the
+                # GROUP BY, which turned this into a scan of the whole table.
+                where = 'WHERE timestamp >= ?'
+                params = [_cutoff_iso(1)]
                 if backend:
                     where += ' AND backend = ?'
                     params.append(backend)
 
-                self.cursor.execute(f'SELECT COUNT(DISTINCT from_id) FROM packets {where}', params)
-                nodes_last_hour = self.cursor.fetchone()[0]
-
-                self.cursor.execute(f'SELECT COUNT(*) FROM packets {where}', params)
-                packets_last_hour = self.cursor.fetchone()[0]
-
-                self.cursor.execute(f'''
-                    SELECT from_id, COUNT(*) as cnt FROM packets {where}
-                    GROUP BY from_id ORDER BY cnt DESC LIMIT 1
-                ''', params)
-                row = self.cursor.fetchone()
-                busiest_node = row[0] if row else None
-                busiest_count = row[1] if row else 0
+                self.cursor.execute(
+                    f'SELECT from_id, COUNT(*) FROM packets {where} GROUP BY +from_id',
+                    params,
+                )
+                per_node = self.cursor.fetchall()
+                nodes_last_hour = len(per_node)
+                packets_last_hour = sum(cnt for _, cnt in per_node)
+                busiest_node, busiest_count = max(
+                    per_node, key=lambda r: r[1], default=(None, 0))
 
                 return {
                     'nodes_last_hour': nodes_last_hour,
