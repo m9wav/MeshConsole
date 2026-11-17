@@ -217,3 +217,25 @@ class TestDecodeRouteCache:
         backend._contacts_generation += 1
         tool.decode_route('aabb', 1)
         assert builds == [1, 1]
+
+
+class TestStream:
+    def test_stream_opens_immediately(self, tmp_db):
+        """The first bytes must not wait for a packet or the 10 s heartbeat."""
+        import queue
+        import time
+
+        orch = _Orchestrator(tmp_db)
+        subscribed = []
+        orch.subscribe_sse = lambda: subscribed.append(queue.Queue()) or subscribed[-1]
+        orch.unsubscribe_sse = lambda q: subscribed.remove(q)
+
+        resp = create_app(orch).test_client().get(
+            '/stream', headers={'Accept-Encoding': 'gzip'}, buffered=False)
+        t0 = time.time()
+        first = next(resp.response)
+        assert time.time() - t0 < 1
+        assert first == b': connected\n\n'
+        assert 'Content-Encoding' not in resp.headers
+        resp.close()
+        assert subscribed == []

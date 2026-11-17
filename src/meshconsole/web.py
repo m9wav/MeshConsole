@@ -1239,6 +1239,10 @@ self.addEventListener('fetch', (event) => {
             q = orchestrator.subscribe_sse()
             start = time.time()
             try:
+                # Send something straight away so the response headers go
+                # out and the browser sees the stream as open, instead of
+                # waiting up to 10 s for the first packet or heartbeat.
+                yield ": connected\n\n"
                 while time.time() - start < 60:
                     try:
                         msg = q.get(timeout=10)

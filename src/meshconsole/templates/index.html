@@ -1913,7 +1913,10 @@
             try {
                 const es = new EventSource('/stream');
                 appState.eventSource = es;
+                let opened = false;
                 es.onopen = function() {
+                    opened = true;
+                    appState.sseFailures = 0;
                     appState.sseConnected = true;
                     updateSSEIndicator();
                     // SSE is live — stop polling
@@ -1957,16 +1960,25 @@
                     }
                 };
                 es.onerror = function() {
-                    appState.sseConnected = false;
-                    updateSSEIndicator();
                     try { es.close(); } catch(e) {}
                     appState.eventSource = null;
-                    // Fall back to polling
+                    if (opened) {
+                        // Routine end of a healthy stream: the server closes
+                        // each one after 60s by design. Reconnect promptly —
+                        // packets arriving while we are disconnected never
+                        // reach the live map — and leave the indicator alone.
+                        setTimeout(initSSE, 1000);
+                        return;
+                    }
+                    // Could not connect at all: show it, fall back to
+                    // polling, and back off (2s, 4s, 8s, then every 10s).
+                    appState.sseConnected = false;
+                    updateSSEIndicator();
                     if (appState.autoRefresh && !appState.autoRefreshTimer) {
                         startAutoRefresh();
                     }
-                    // Retry SSE after 10s
-                    setTimeout(initSSE, 10000);
+                    appState.sseFailures = (appState.sseFailures || 0) + 1;
+                    setTimeout(initSSE, Math.min(10000, 1000 * Math.pow(2, appState.sseFailures)));
                 };
             } catch(e) {
                 // SSE not supported — polling continues
